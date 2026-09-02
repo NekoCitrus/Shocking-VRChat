@@ -449,6 +449,10 @@ class ServiceController:
                 self.state = 'running'
                 self._emit({'type': 'service', 'state': self.state})
             except Exception:
+                if self.web_server is not None:
+                    self.web_server.server_close()
+                    self.web_server = None
+                self.web_thread = None
                 if self.runtime is not None:
                     self.runtime.stop()
                 self.runtime = None

@@ -2,9 +2,11 @@ import asyncio
 import copy
 import socket
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import yaml
 from pythonosc.udp_client import SimpleUDPClient
@@ -19,6 +21,7 @@ from srv.config_manager import (
     validate_config,
 )
 from srv.udp_relay import create_udp_relay
+from srv.win32_ui import DesktopApplication
 
 
 def free_udp_port():
@@ -219,6 +222,68 @@ class ServiceControllerTests(unittest.TestCase):
                 client._sock.close()
         finally:
             controller.stop()
+
+    def test_failed_web_thread_start_closes_server_and_runtime(self):
+        settings = copy.deepcopy(DEFAULT_SETTINGS)
+        basic = copy.deepcopy(DEFAULT_BASIC_SETTINGS)
+        settings['SERVER_IP'] = '127.0.0.1'
+        settings['ws']['master_uuid'] = '86c053e8-4ce1-466b-b123-9e2944b8c490'
+        settings['ws']['listen_host'] = '127.0.0.1'
+        settings['ws']['listen_port'] = free_tcp_port()
+        settings['web_server']['listen_port'] = free_tcp_port()
+        settings['osc']['listen_port'] = free_udp_port()
+        settings['chatbox']['enable'] = False
+
+        class FakeServer:
+            closed = False
+
+            def serve_forever(self):
+                pass
+
+            def server_close(self):
+                self.closed = True
+
+        class FailingThread:
+            def start(self):
+                raise RuntimeError('thread start failed')
+
+        fake_server = FakeServer()
+        real_thread = threading.Thread
+
+        def thread_factory(*args, **kwargs):
+            if kwargs.get('name') == 'status-web-server':
+                return FailingThread()
+            return real_thread(*args, **kwargs)
+
+        controller = ServiceController()
+        with patch('shocking_vrchat.make_server', return_value=fake_server), patch(
+            'shocking_vrchat.Thread', side_effect=thread_factory
+        ):
+            with self.assertRaisesRegex(RuntimeError, 'thread start failed'):
+                controller.start(settings, basic)
+
+        self.assertTrue(fake_server.closed)
+        self.assertIsNone(controller.web_server)
+        self.assertIsNone(controller.web_thread)
+        self.assertIsNone(controller.runtime)
+        self.assertEqual(controller.state, 'error')
+
+
+class DesktopApplicationTests(unittest.TestCase):
+    def test_busy_save_does_not_write_partially_applied_settings(self):
+        calls = []
+
+        class BusyApplication:
+            action_running = True
+
+            def _message(self, message, error=False):
+                calls.append((message, error))
+
+            def _read_form(self):
+                raise AssertionError('busy operation must not read or save the form')
+
+        DesktopApplication._save_and_restart(BusyApplication())
+        self.assertEqual(calls, [('当前操作尚未完成，请稍候再试。', True)])
 
 
 if __name__ == '__main__':

@@ -463,6 +463,9 @@ class DesktopApplication:
         threading.Thread(target=worker, daemon=True, name=f'ui-{action}').start()
 
     def _save_and_restart(self):
+        if self.action_running:
+            self._message('当前操作尚未完成，请稍候再试。', error=True)
+            return
         try:
             settings, basic = self._read_form()
             self.config_manager.save(settings, basic)
