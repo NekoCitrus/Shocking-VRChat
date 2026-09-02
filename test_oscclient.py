@@ -25,12 +25,18 @@ client = SimpleUDPClient(ip, port)  # Create client
 # time.sleep(0.2)
 # client.send_message("/avatar/parameters/ShockA1/b", [0.6,])  # Send message with int, float and string
 # time.sleep(0.2)
-for _ in range(30):
-    client.send_message("/avatar/parameters/ShockB2/some/param", [random.random(),])  # Send message with int, float and string
-    time.sleep(0.05)
-for _ in range(200):
-    client.send_message("/avatar/parameters/pcs/sps/pussy", [random.random(),])  # Send message with int, float and string
-    time.sleep(0.05)
-for _ in range(3):
-    client.send_message("/avatar/parameters/ShockB2/some/param", [random.random(),])  # Send message with int, float and string
-    time.sleep(0.05)
+def main():
+    """手动发送测试 OSC 数据；导入模块时不再产生网络流量。"""
+    for _ in range(30):
+        client.send_message("/avatar/parameters/ShockB2/some/param", [random.random()])
+        time.sleep(0.05)
+    for _ in range(200):
+        client.send_message("/avatar/parameters/pcs/sps/pussy", [random.random()])
+        time.sleep(0.05)
+    for _ in range(3):
+        client.send_message("/avatar/parameters/ShockB2/some/param", [random.random()])
+        time.sleep(0.05)
+
+
+if __name__ == '__main__':
+    main()

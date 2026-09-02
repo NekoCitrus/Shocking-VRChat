@@ -1,7 +1,6 @@
-flask
-flask[async]
-loguru
-websockets
-python-osc
-pyyaml
-tuya-connector-python
+Flask==3.1.2
+loguru==0.7.3
+websockets==15.0.1
+python-osc==1.9.3
+PyYAML==6.0.3
+tuya-connector-python==0.1.2

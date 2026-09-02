@@ -5,7 +5,7 @@ a = Analysis(
     ['shocking_vrchat.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('templates', 'templates')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

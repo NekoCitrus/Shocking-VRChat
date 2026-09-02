@@ -32,6 +32,7 @@ class ShockHandler(BaseHandler):
         self.to_clear_time    = 0
         self.is_cleared       = True
         self.chatbox_manager = None
+        self._background_tasks = set()
 
     def set_chatbox_manager(self, chatbox_manager):
         """设置Chatbox管理器引用"""
@@ -51,24 +52,39 @@ class ShockHandler(BaseHandler):
         }
     
     def start_background_jobs(self):
-        # logger.info(f"Channel: {self.channel}, background job started.")
-        asyncio.ensure_future(self.clear_check())
-        # if self.shock_mode == 'shock':
-        #     asyncio.ensure_future(self.feed_wave())
+        self._track_task(self.clear_check())
         if self.shock_mode == 'distance':
-            asyncio.ensure_future(self.distance_background_wave_feeder())
+            self._track_task(self.distance_background_wave_feeder())
+
+    def _track_task(self, coroutine):
+        task = asyncio.create_task(coroutine)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._task_finished)
+        return task
+
+    def _task_finished(self, task):
+        self._background_tasks.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            logger.error(f'Channel {self.channel} background task failed: {task.exception()}')
+
+    async def stop_background_jobs(self):
+        tasks = tuple(self._background_tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     def osc_handler(self, address, *args):
         logger.debug(f"VRCOSC: CHANN {self.channel}: {address}: {args}")
         val = self.param_sanitizer(args)
-        return asyncio.ensure_future(self._handler(val))
+        return asyncio.create_task(self._handler(val))
 
     async def clear_check(self):
         # logger.info(f'Channel {self.channel} started clear check.')
         sleep_time = 0.05
         while 1:
             await asyncio.sleep(sleep_time)
-            current_time = time.time()
+            current_time = time.monotonic()
             # logger.debug(f"{str(self.is_cleared)}, {current_time}, {self.to_clear_time}")
             if not self.is_cleared and current_time > self.to_clear_time:
                 self.is_cleared = True
@@ -79,7 +95,7 @@ class ShockHandler(BaseHandler):
                 logger.info(f'Channel {self.channel}, wave cleared after timeout.')
     
     async def feed_wave(self):
-        raise NotImplemented
+        raise NotImplementedError
         logger.info(f'Channel {self.channel} started wave feeding.')
         sleep_time = 1
         while 1:
@@ -88,12 +104,14 @@ class ShockHandler(BaseHandler):
 
     async def set_clear_after(self, val):
         self.is_cleared = False
-        self.to_clear_time = time.time() + val
+        self.to_clear_time = time.monotonic() + val
 
     @staticmethod
     def generate_wave_100ms(freq, from_, to_):
-        assert 0 <= from_ <= 1, "Invalid wave generate."
-        assert 0 <= to_   <= 1, "Invalid wave generate."
+        if not isinstance(freq, int) or not 0 <= freq <= 255:
+            raise ValueError('波形频率必须是 0~255 之间的整数。')
+        if not 0 <= from_ <= 1 or not 0 <= to_ <= 1:
+            raise ValueError('波形强度必须位于 0~1。')
         from_ = int(100*from_)
         to_   = int(100*to_)
         ret = ["{:02X}".format(freq)]*4
@@ -107,23 +125,24 @@ class ShockHandler(BaseHandler):
         strength = 0
         trigger_bottom = self.mode_config['trigger_range']['bottom']
         trigger_top = self.mode_config['trigger_range']['top']
-        if distance > self.mode_config['trigger_range']['bottom']:
+        if distance > trigger_bottom:
             strength = (
                     distance - trigger_bottom
                 ) / (
                     trigger_top - trigger_bottom
                 )
-            strength = 1 if strength > 1 else strength
+            strength = min(max(strength, 0.0), 1.0)
 
         self.distance_current_strength = strength
         self.current_strength_percentage = strength
+        self.is_active = strength > 0
 
         if self.chatbox_manager:
             self.chatbox_manager.update_channel_mode(
                 self.channel, 
                 'distance', 
                 strength,
-                is_active=True
+                is_active=self.is_active
             )
 
     async def distance_background_wave_feeder(self):
@@ -131,7 +150,7 @@ class ShockHandler(BaseHandler):
         next_tick_time   = 0
         last_strength    = 0
         while 1:
-            current_time = time.time()
+            current_time = time.monotonic()
             if current_time < next_tick_time:
                 await asyncio.sleep(tick_time_window)
                 continue
@@ -149,14 +168,24 @@ class ShockHandler(BaseHandler):
             await self.DG_CONN.broadcast_wave(self.channel, wavestr=wave)
     
     async def send_shock_wave(self, shock_time, shockwave: str):
-        shockwave_duration = (shockwave.count(',')+1) * 0.1
-        send_times = math.ceil(shock_time // shockwave_duration)
-        for _ in range(send_times):
-            await self.DG_CONN.broadcast_wave(self.channel, wavestr=self.mode_config['shock']['wave'])
-            await asyncio.sleep(shockwave_duration)
+        try:
+            wave_segments = json.loads(shockwave)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ValueError('电击波形必须是合法的 JSON 数组。') from exc
+        if not wave_segments or not all(isinstance(segment, str) for segment in wave_segments):
+            raise ValueError('电击波形必须包含至少一个波形片段。')
+
+        remaining_segments = math.ceil(max(float(shock_time), 0.0) / 0.1)
+        while remaining_segments > 0:
+            chunk_size = min(remaining_segments, len(wave_segments))
+            chunk = json.dumps(wave_segments[:chunk_size], separators=(',', ':'))
+            await self.DG_CONN.broadcast_wave(self.channel, wavestr=chunk)
+            remaining_segments -= chunk_size
+            if remaining_segments:
+                await asyncio.sleep(chunk_size * 0.1)
     
     async def handler_shock(self, distance):
-        current_time = time.time()
+        current_time = time.monotonic()
         if distance > self.mode_config['trigger_range']['bottom'] and current_time > self.to_clear_time:
             shock_duration = self.mode_config['shock']['duration']
             await self.set_clear_after(shock_duration)
@@ -173,5 +202,5 @@ class ShockHandler(BaseHandler):
                     duration=shock_duration
                 )
 
-            asyncio.create_task(self.send_shock_wave(shock_duration, self.mode_config['shock']['wave']))
+            self._track_task(self.send_shock_wave(shock_duration, self.mode_config['shock']['wave']))
 

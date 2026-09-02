@@ -1,6 +1,23 @@
-import uuid
+from threading import RLock
 
 WS_CONNECTIONS = set()
+WS_CONNECTIONS_LOCK = RLock()
+
+
+def add_ws_connection(connection):
+    with WS_CONNECTIONS_LOCK:
+        WS_CONNECTIONS.add(connection)
+
+
+def remove_ws_connection(connection):
+    with WS_CONNECTIONS_LOCK:
+        WS_CONNECTIONS.discard(connection)
+
+
+def get_ws_connections():
+    """Return a stable snapshot that is safe to iterate from other threads."""
+    with WS_CONNECTIONS_LOCK:
+        return tuple(WS_CONNECTIONS)
 
 waveData = [
     '["0A0A0A0A00000000","0A0A0A0A0A0A0A0A","0A0A0A0A14141414","0A0A0A0A1E1E1E1E","0A0A0A0A28282828","0A0A0A0A32323232","0A0A0A0A3C3C3C3C","0A0A0A0A46464646","0A0A0A0A50505050","0A0A0A0A5A5A5A5A","0A0A0A0A64646464"]',
@@ -8,6 +25,3 @@ waveData = [
     '["4A4A4A4A64646464","4545454564646464","4040404064646464","3B3B3B3B64646464","3636363664646464","3232323264646464","2D2D2D2D64646464","2828282864646464","2323232364646464","1E1E1E1E64646464","1A1A1A1A64646464"]'
 ]
 DEFAULT_WAVE = waveData[0]
-
-from .chatbox_manager import ChatboxManager
-from .advanced_chatbox_manager import AdvancedChatboxManager

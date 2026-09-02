@@ -152,6 +152,35 @@ ws: # Websocket 服务配置
 
 ```
 
+### Chatbox 与控制接口配置
+
+新版会自动把缺少的配置项补充到 `settings-advanced-v0.2.yaml`：
+
+```yaml
+chatbox:
+  enable: true
+  osc_host: 127.0.0.1
+  osc_port: 9000
+  update_interval: 3.0
+  set_avatar_parameter: true
+api:
+  control_enabled: false
+  token: 自动生成的随机令牌
+```
+
+涉及设备输出的 HTTP API 默认关闭。确实需要时才将 `control_enabled` 改为 `true`，并通过查询参数 `?token=...` 或请求头 `X-Control-Token` 提供令牌。请勿公开该令牌，也不建议将 Web 服务监听地址改成公网可访问地址。
+
+## 开发与打包
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements-build.txt
+python -m unittest discover -v
+pyinstaller --clean --noconfirm shocking_vrchat.spec
+```
+
+PyInstaller 配置会把 `templates` 一并打包，生成的配置文件固定写入程序或源码所在目录。
+
 ## FAQ
 
 ### 是否有逃生通道

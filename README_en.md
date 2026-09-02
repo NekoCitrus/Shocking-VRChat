@@ -149,6 +149,35 @@ ws: # WebSocket service configuration
   master_uuid: 6da2fd3b-a6e5-4af4-afc1-96bfd2e9e95c # Automatically generated randomly on first startup
 ```
 
+### Chatbox and control API settings
+
+Missing options are added automatically to `settings-advanced-v0.2.yaml`:
+
+```yaml
+chatbox:
+  enable: true
+  osc_host: 127.0.0.1
+  osc_port: 9000
+  update_interval: 3.0
+  set_avatar_parameter: true
+api:
+  control_enabled: false
+  token: an automatically generated random token
+```
+
+HTTP APIs that actuate a device are disabled by default. Enable them only when required, and provide the token through `?token=...` or the `X-Control-Token` header. Keep the token private and do not expose the web server directly to the public Internet.
+
+## Development and packaging
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements-build.txt
+python -m unittest discover -v
+pyinstaller --clean --noconfirm shocking_vrchat.spec
+```
+
+The PyInstaller specification includes the `templates` directory. Configuration files are written next to the executable or source entry point.
+
 ## FAQ
 
 ### Is there an escape route?
