@@ -3,4 +3,5 @@ loguru==0.7.3
 websockets==15.0.1
 python-osc==1.9.3
 PyYAML==6.0.3
+qrcode==8.2
 tuya-connector-python==0.1.2

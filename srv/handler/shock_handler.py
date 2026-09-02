@@ -6,7 +6,7 @@ from ..connector.coyotev3ws import DGConnection
 
 
 class ShockHandler(BaseHandler):
-    def __init__(self, SETTINGS: dict, DG_CONN: DGConnection, channel_name: str) -> None:
+    def __init__(self, SETTINGS: dict, DG_CONN: DGConnection, channel_name: str, event_callback=None) -> None:
         self.SETTINGS = SETTINGS
         self.DG_CONN = DG_CONN
         self.channel = channel_name.upper()
@@ -33,6 +33,9 @@ class ShockHandler(BaseHandler):
         self.is_cleared       = True
         self.chatbox_manager = None
         self._background_tasks = set()
+        self.event_callback = event_callback
+        self.last_parameter = ''
+        self.last_raw_value = 0.0
 
     def set_chatbox_manager(self, chatbox_manager):
         """设置Chatbox管理器引用"""
@@ -45,6 +48,8 @@ class ShockHandler(BaseHandler):
             'mode': self.current_mode,
             'is_active': self.is_active,
             'strength_percentage': self.current_strength_percentage,
+            'parameter': self.last_parameter,
+            'raw_value': self.last_raw_value,
             'config': {
                 'trigger_bottom': self.mode_config['trigger_range']['bottom'],
                 'trigger_top': self.mode_config['trigger_range']['top']
@@ -77,7 +82,22 @@ class ShockHandler(BaseHandler):
     def osc_handler(self, address, *args):
         logger.debug(f"VRCOSC: CHANN {self.channel}: {address}: {args}")
         val = self.param_sanitizer(args)
+        self.last_parameter = address
+        self.last_raw_value = float(val)
+        self._emit_debug_event()
         return asyncio.create_task(self._handler(val))
+
+    def _emit_debug_event(self):
+        if self.event_callback is None:
+            return
+        self.event_callback({
+            'type': 'channel',
+            'channel': self.channel,
+            'parameter': self.last_parameter,
+            'raw_value': self.last_raw_value,
+            'strength_percentage': self.current_strength_percentage,
+            'active': self.is_active,
+        })
 
     async def clear_check(self):
         # logger.info(f'Channel {self.channel} started clear check.')
@@ -91,6 +111,7 @@ class ShockHandler(BaseHandler):
                 self.distance_current_strength = 0
                 self.is_active = False
                 self.current_strength_percentage = 0.0
+                self._emit_debug_event()
                 await self.DG_CONN.broadcast_clear_wave(self.channel)
                 logger.info(f'Channel {self.channel}, wave cleared after timeout.')
     
@@ -136,6 +157,7 @@ class ShockHandler(BaseHandler):
         self.distance_current_strength = strength
         self.current_strength_percentage = strength
         self.is_active = strength > 0
+        self._emit_debug_event()
 
         if self.chatbox_manager:
             self.chatbox_manager.update_channel_mode(
@@ -191,6 +213,7 @@ class ShockHandler(BaseHandler):
             await self.set_clear_after(shock_duration)
             self.is_active = True
             self.current_strength_percentage = 1.0
+            self._emit_debug_event()
             logger.success(f'Channel {self.channel}: Shocking for {shock_duration} s.')
 
             if self.chatbox_manager:

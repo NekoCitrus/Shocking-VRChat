@@ -60,6 +60,15 @@ class ShockHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(handler.is_active)
         self.assertEqual(handler.current_strength_percentage, 0.5)
 
+    async def test_debug_event_contains_parameter_raw_and_mapped_values(self):
+        events = []
+        handler = ShockHandler(make_settings(), FakeDGConnection(), 'A', event_callback=events.append)
+        task = handler.osc_handler('/avatar/parameters/test', 0.25)
+        await task
+        self.assertEqual(handler.last_parameter, '/avatar/parameters/test')
+        self.assertEqual(handler.last_raw_value, 0.25)
+        self.assertTrue(any(event.get('strength_percentage') == 0.25 for event in events))
+
     async def test_short_shock_sends_partial_wave(self):
         connection = FakeDGConnection()
         handler = ShockHandler(make_settings('shock'), connection, 'A')
