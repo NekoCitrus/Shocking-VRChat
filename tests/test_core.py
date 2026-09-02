@@ -63,8 +63,9 @@ class ShockHandlerTests(unittest.IsolatedAsyncioTestCase):
     async def test_debug_event_contains_parameter_raw_and_mapped_values(self):
         events = []
         handler = ShockHandler(make_settings(), FakeDGConnection(), 'A', event_callback=events.append)
-        task = handler.osc_handler('/avatar/parameters/test', 0.25)
-        await task
+        result = handler.osc_handler('/avatar/parameters/test', 0.25)
+        await asyncio.sleep(0)
+        self.assertIsNone(result)
         self.assertEqual(handler.last_parameter, '/avatar/parameters/test')
         self.assertEqual(handler.last_raw_value, 0.25)
         self.assertTrue(any(event.get('strength_percentage') == 0.25 for event in events))
@@ -132,6 +133,20 @@ class ChatboxTests(unittest.TestCase):
         manager = AdvancedChatboxManager({'chatbox': {'enable': False}})
         manager.update_channel_mode('A', 'distance', 0.5, is_active=True)
         self.assertTrue(manager.channel_modes['A']['is_active'])
+
+    def test_cleanup_closes_udp_socket(self):
+        manager = AdvancedChatboxManager({
+            'chatbox': {
+                'enable': True,
+                'osc_host': '127.0.0.1',
+                'osc_port': 9000,
+                'set_avatar_parameter': False,
+            },
+        })
+        osc_socket = manager.osc_client._sock
+        manager.cleanup()
+        self.assertEqual(osc_socket.fileno(), -1)
+        self.assertIsNone(manager.osc_client)
 
 
 if __name__ == '__main__':

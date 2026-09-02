@@ -4,8 +4,6 @@ import time, random
 ip = "127.0.0.1"
 port = 9001
 
-client = SimpleUDPClient(ip, port)  # Create client
-
 # client.send_message("/avatar/parameters/Shock/Area1", 0.02)   # Send float message
 # input()
 
@@ -25,17 +23,23 @@ client = SimpleUDPClient(ip, port)  # Create client
 # time.sleep(0.2)
 # client.send_message("/avatar/parameters/ShockA1/b", [0.6,])  # Send message with int, float and string
 # time.sleep(0.2)
-def main():
-    """手动发送测试 OSC 数据；导入模块时不再产生网络流量。"""
-    for _ in range(30):
-        client.send_message("/avatar/parameters/ShockB2/some/param", [random.random()])
-        time.sleep(0.05)
-    for _ in range(200):
-        client.send_message("/avatar/parameters/pcs/sps/pussy", [random.random()])
-        time.sleep(0.05)
-    for _ in range(3):
-        client.send_message("/avatar/parameters/ShockB2/some/param", [random.random()])
-        time.sleep(0.05)
+def main(client=None):
+    """手动发送测试 OSC 数据；导入模块时不产生网络流量。"""
+    owns_client = client is None
+    client = client or SimpleUDPClient(ip, port)
+    try:
+        for _ in range(30):
+            client.send_message("/avatar/parameters/ShockB2/some/param", [random.random()])
+            time.sleep(0.05)
+        for _ in range(200):
+            client.send_message("/avatar/parameters/pcs/sps/pussy", [random.random()])
+            time.sleep(0.05)
+        for _ in range(3):
+            client.send_message("/avatar/parameters/ShockB2/some/param", [random.random()])
+            time.sleep(0.05)
+    finally:
+        if owns_client:
+            client._sock.close()
 
 
 if __name__ == '__main__':

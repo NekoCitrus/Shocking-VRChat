@@ -81,11 +81,17 @@ class ShockHandler(BaseHandler):
 
     def osc_handler(self, address, *args):
         logger.debug(f"VRCOSC: CHANN {self.channel}: {address}: {args}")
-        val = self.param_sanitizer(args)
+        try:
+            val = self.param_sanitizer(args)
+        except ValueError as exc:
+            logger.warning(f'通道 {self.channel} 忽略无效 OSC 参数 {address}: {exc}')
+            return None
         self.last_parameter = address
         self.last_raw_value = float(val)
         self._emit_debug_event()
-        return asyncio.create_task(self._handler(val))
+        self._track_task(self._handler(val))
+        # A non-None return value is treated by python-osc as a reply address.
+        return None
 
     def _emit_debug_event(self):
         if self.event_callback is None:

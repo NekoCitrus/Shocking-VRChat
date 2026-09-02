@@ -120,7 +120,7 @@ class AdvancedChatboxManager:
 
     async def update_chatbox(self, connections, shock_handlers=None, detailed=False):
         """按配置的间隔更新 Chatbox。"""
-        if not self.enabled:
+        if not self.enabled or self.osc_client is None:
             return
         current_time = time.monotonic()
         if current_time - self.last_update_time < self.update_interval:
@@ -139,7 +139,7 @@ class AdvancedChatboxManager:
 
     def send_custom_message(self, message):
         """发送自定义消息到 Chatbox。"""
-        if not self.enabled:
+        if not self.enabled or self.osc_client is None:
             return
         try:
             self.osc_client.send_message('/chatbox/input', [str(message), True, False])
@@ -149,7 +149,7 @@ class AdvancedChatboxManager:
 
     def cleanup(self):
         """清理 Chatbox 状态。"""
-        if not self.enabled:
+        if not self.enabled or self.osc_client is None:
             return
         try:
             self.send_custom_message('郊狼设备已断开')
@@ -158,3 +158,9 @@ class AdvancedChatboxManager:
             logger.info('Chatbox功能已清理')
         except Exception as exc:
             logger.warning(f'Chatbox清理失败: {exc}')
+        finally:
+            # python-osc 1.9.x does not expose close(), but owns a UDP socket.
+            osc_socket = getattr(self.osc_client, '_sock', None)
+            if osc_socket is not None:
+                osc_socket.close()
+            self.osc_client = None

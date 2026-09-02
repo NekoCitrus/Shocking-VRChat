@@ -2,10 +2,12 @@ import asyncio
 import copy
 import socket
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
 import yaml
+from pythonosc.udp_client import SimpleUDPClient
 
 from shocking_vrchat import ServiceController
 from srv.config_manager import (
@@ -91,6 +93,21 @@ class ConfigManagerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_config(settings, basic)
 
+    def test_relay_rejects_vrcft_loop_and_duplicate_targets(self):
+        settings = copy.deepcopy(DEFAULT_SETTINGS)
+        basic = copy.deepcopy(DEFAULT_BASIC_SETTINGS)
+        settings['ws']['master_uuid'] = '86c053e8-4ce1-466b-b123-9e2944b8c490'
+        settings['relay']['enabled'] = True
+        settings['relay']['vrcft_port'] = settings['relay']['listen_port']
+        with self.assertRaises(ValueError):
+            validate_config(settings, basic)
+
+        settings['relay']['vrcft_port'] = 9011
+        settings['relay']['internal_host'] = settings['relay']['vrcft_host']
+        settings['relay']['internal_port'] = settings['relay']['vrcft_port']
+        with self.assertRaises(ValueError):
+            validate_config(settings, basic)
+
 
 class DatagramReceiver(asyncio.DatagramProtocol):
     def __init__(self, future):
@@ -155,6 +172,53 @@ class ServiceControllerTests(unittest.TestCase):
         finally:
             controller.stop()
         self.assertEqual(controller.state, 'stopped')
+
+    def test_real_udp_dispatch_does_not_attempt_to_reply_with_a_task(self):
+        settings = copy.deepcopy(DEFAULT_SETTINGS)
+        basic = copy.deepcopy(DEFAULT_BASIC_SETTINGS)
+        settings['SERVER_IP'] = '127.0.0.1'
+        settings['ws']['master_uuid'] = '86c053e8-4ce1-466b-b123-9e2944b8c490'
+        settings['ws']['listen_host'] = '127.0.0.1'
+        settings['ws']['listen_port'] = free_tcp_port()
+        settings['web_server']['listen_port'] = free_tcp_port()
+        settings['osc']['listen_port'] = free_udp_port()
+        settings['chatbox']['enable'] = False
+        basic['dglab3']['channel_a']['avatar_params'] = ['/avatar/parameters/integration']
+        controller = ServiceController()
+        loop_errors = []
+        try:
+            controller.start(settings, basic)
+            controller.runtime.loop.call_soon_threadsafe(
+                controller.runtime.loop.set_exception_handler,
+                lambda _loop, context: loop_errors.append(
+                    context.get('exception') or context.get('message')
+                ),
+            )
+            client = SimpleUDPClient('127.0.0.1', settings['osc']['listen_port'])
+            try:
+                # Invalid payloads are ignored without escaping into asyncio's
+                # exception handler or changing the last valid value.
+                client.send_message('/avatar/parameters/integration', ['invalid'])
+                client.send_message('/avatar/parameters/integration', [0.2, 0.3])
+                client.send_message('/avatar/parameters/integration', [0.4])
+                deadline = time.monotonic() + 2
+                raw_value = -1
+                while time.monotonic() < deadline:
+                    raw_value = (
+                        controller.snapshot()['channels']
+                        .get('A', {})
+                        .get('raw_value', -1)
+                    )
+                    if abs(raw_value - 0.4) < 0.00001:
+                        break
+                    time.sleep(0.02)
+                self.assertAlmostEqual(raw_value, 0.4, places=5)
+                time.sleep(0.1)
+                self.assertEqual(loop_errors, [])
+            finally:
+                client._sock.close()
+        finally:
+            controller.stop()
 
 
 if __name__ == '__main__':

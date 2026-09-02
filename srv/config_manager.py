@@ -143,11 +143,25 @@ def validate_config(settings, basic_settings):
         _validate_host(relay, host_name)
     for port_name in ('listen_port', 'vrcft_port', 'internal_port'):
         _validate_port(relay, port_name)
-    if relay['enabled'] and (
-        relay['listen_host'] == relay['internal_host']
-        and relay['listen_port'] == relay['internal_port']
-    ):
-        raise ValueError('分流入口与程序内部监听地址不能相同。')
+    if relay['enabled']:
+        listen = (relay['listen_host'], relay['listen_port'])
+        vrcft = (relay['vrcft_host'], relay['vrcft_port'])
+        internal = (relay['internal_host'], relay['internal_port'])
+        wildcard_hosts = {'0.0.0.0', '::', '[::]'}
+
+        def overlaps_listener(target):
+            return target == listen or (
+                target[1] == listen[1]
+                and (
+                    listen[0] in wildcard_hosts
+                    or target[0] in ('127.0.0.1', 'localhost', '::1')
+                )
+            )
+
+        if overlaps_listener(vrcft) or overlaps_listener(internal):
+            raise ValueError('分流目标不能与分流入口相同，否则会形成 UDP 循环。')
+        if vrcft == internal:
+            raise ValueError('VRCFT 目标与本程序内部目标不能相同。')
 
     chatbox = settings['chatbox']
     _validate_host(chatbox, 'osc_host')

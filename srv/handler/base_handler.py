@@ -1,4 +1,5 @@
 import asyncio
+from loguru import logger
 
 class BaseHandler():
     
@@ -20,5 +21,16 @@ class BaseHandler():
 
     def osc_handler(self, address, *args):
         # logger.debug(f"VRCOSC: CHANN {self.channel}: {address}: {args}")
-        val = self.param_sanitizer(args)
-        return asyncio.create_task(self._handler(val))
+        try:
+            val = self.param_sanitizer(args)
+        except ValueError as exc:
+            logger.warning(f'忽略无效 OSC 参数 {address}: {exc}')
+            return None
+        track_task = getattr(self, '_track_task', None)
+        if callable(track_task):
+            track_task(self._handler(val))
+        else:
+            asyncio.create_task(self._handler(val))
+        # python-osc interprets every non-None callback return value as an OSC
+        # reply address. A Task must therefore never escape this callback.
+        return None
