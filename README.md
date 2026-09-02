@@ -12,12 +12,32 @@
 ## 使用方式
 
 1. 前往 [本项目Release](https://github.com/VRChatNext/Shocking-VRChat/releases) 下载最新版本的 Shocking-VRChat 工具
-2. 首次运行 exe 程序，将会在当前目录生成设置文件并退出。
-3. 在配置文件 `settings-v*.*.yaml` 中填入 `avatar_params` 与工作模式（shock/distance）。
-4. （可选）按需修改进阶配置文件 `settings-advanced-v*.*.yaml` 内容，参数含义请查看进阶配置文件参考。
-4. 重新运行本程序，请确认是否弹出了 Windows 防火墙安全警告，如弹出请选择允许，以接受郊狼 APP 被控连接。
-5. 启动 DG-LAB 3.0 APP，使用 Socket 控制功能扫描弹出窗口的二维码。
-6. 享受 VRChat！
+2. 运行 exe。程序会直接打开轻量桌面窗口并自动启动后台服务。
+3. 在“基本设置”中确认 OSC 监听地址与 A/B 通道最大强度；在“A/B 参数”中每行填写一个 `/avatar/parameters/...`。
+4. 点击“保存并重启服务”。首次联网时如弹出 Windows 防火墙提示，请选择允许。
+5. 启动 DG-LAB 3.0 APP，使用 Socket 控制功能扫描窗口右侧二维码。
+6. 如勾选“关闭主窗口后继续在系统托盘运行”，关闭窗口不会停止服务；可从托盘菜单重新打开或退出。
+
+## 桌面窗口
+
+- **基本设置**：编辑 `127.0.0.1:9001` 形式的监听地址、A/B 强度上限、Chatbox 与后台运行开关。
+- **A/B 参数**：每行一个 Avatar 参数，支持通配符 `*`、批量粘贴和自动去重。
+- **运行调试**：显示单台郊狼的连接状态、当前触发参数、OSC 原始值、映射百分比与实际发送强度。
+- **UDP 分流**：启用后把入口数据包原样转发到 VRCFT（默认 `127.0.0.1:9011`）和本程序内部监听（默认 `127.0.0.1:9021`）。
+
+程序仅接受一台郊狼设备连接，第二台设备会被拒绝。
+
+## 配置文件
+
+配置固定保存在：
+
+```text
+%APPDATA%\ShockingVRChat\settings-v0.3.yaml
+```
+
+日志保存在同目录的 `shocking-vrchat.log`。从 v0.2 升级时，如果新配置不存在，程序会自动读取 exe/源码旁的 `settings-v0.2.yaml` 和 `settings-advanced-v0.2.yaml`，迁移到新目录并保留旧文件。
+
+一般设置和 A/B 参数建议直接在窗口修改。工作模式、触发范围、波形、WebSocket 或 Web 服务端口等高级选项仍可在 YAML 中修改；手动修改 YAML 后请从托盘退出程序并重新打开。
 
 ## 工作模式解释
 
@@ -40,27 +60,43 @@
     - top 参数在 shock 模式被忽略
 
 
-## 基础配置文件参考
+## 配置文件参考
 
-配置文件格式 `yaml`， 当前配置文件版本: `v0.2` 。
+配置文件格式为 YAML，当前版本为 `v0.3`。窗口编辑的 A/B 参数位于 `channels.dglab3`，其他设置位于 `settings`。
 
 ```yaml
-dglab3:
-  channel_a:
-    avatar_params:  
-    # 此处填写 OSC 监听参数组，可以使用通配符 * 匹配任意字符串，注意保留正确缩进与前缀的 “- ” 
-    # 可参考 https://python-osc.readthedocs.io/en/latest/dispatcher.html#mapping 
-    - /avatar/parameters/pcs/contact/enterPass
-    - /avatar/parameters/Shock/wildcard/*
-    mode: distance # 工作模式，此处为距离模式
-    strength_limit: 100 # 强度限制，程序将取该强度与主机设置的强度中最大的一个
-  channel_b:
-    avatar_params:
-    - /avatar/parameters/lms-penis-proximityA*
-    - /avatar/parameters/ShockB2/some/param
-    mode: shock # 工作模式，此处为电击模式
-    strength_limit: 100
-version: v0.2
+version: v0.3
+channels:
+  version: v0.3
+  dglab3:
+    channel_a:
+      avatar_params:
+      # 此处填写 OSC 监听参数组，可以使用通配符 * 匹配任意字符串
+      - /avatar/parameters/pcs/contact/enterPass
+      - /avatar/parameters/Shock/wildcard/*
+      mode: distance
+      strength_limit: 100 # 与郊狼 APP 上限取较小值
+    channel_b:
+      avatar_params:
+      - /avatar/parameters/lms-penis-proximityA*
+      - /avatar/parameters/ShockB2/some/param
+      mode: shock
+      strength_limit: 100
+settings:
+  version: v0.3
+  osc:
+    listen_host: 127.0.0.1
+    listen_port: 9001
+  relay:
+    enabled: false
+    listen_host: 127.0.0.1
+    listen_port: 9001
+    vrcft_host: 127.0.0.1
+    vrcft_port: 9011
+    internal_host: 127.0.0.1
+    internal_port: 9021
+  chatbox:
+    enable: true
 ```
 
 ## 模型参数配置
@@ -100,10 +136,12 @@ version: v0.2
   - /avatar/parameters/lms-stroke-out*
   - /avatar/parameters/lms-stroke-smash
 
-## 进阶配置文件参考
+## 高级设置参考
+
+以下片段对应配置文件的 `settings` 节点内部：
 
 ```yaml
-SERVER_IP: null # 为 null 时程序将尝试自动获取本机 IP，如果获取错误，请将null修改为正确的 IP 地址（手机可以访问到电脑的 IP ，通常为有线网络或 WiFi ）
+SERVER_IP: null # 为 null 时程序将尝试自动获取本机 IP
 dglab3:
   channel_a: # 通道 A 配置
     mode_config:   # 工作模式配置
@@ -133,7 +171,7 @@ dglab3:
         bottom: 0.1
         top: 0.8
 general: # 通用配置
-  auto_open_qr_web_page: true # 程序启动时自动开启扫码 Web 页面
+  run_in_background: true
   local_ip_detect:  # 探测本地 IP 时使用的服务器地址
     host: 223.5.5.5 # 默认为 AliDNS 如果在中国大陆以外使用，请适当修改
     port: 80
@@ -141,7 +179,7 @@ log_level: INFO # 日志等级，诊断问题时可以改为 DEBUG
 osc: # OSC 服务配置
   listen_host: 127.0.0.1 # 如果 VRChat 在其他主机运行，请改为 0.0.0.0，并给 VRChat 正确配置 osc 启动命令行参数。
   listen_port: 9001
-version: v0.2 # 配置文件版本
+version: v0.3 # 配置文件版本
 web_server: # Web 服务器配置
   listen_host: 127.0.0.1 # 如果需要从其他主机打开网页扫码，请改为 0.0.0.0
   listen_port: 8800
@@ -154,7 +192,7 @@ ws: # Websocket 服务配置
 
 ### Chatbox 与控制接口配置
 
-新版会自动把缺少的配置项补充到 `settings-advanced-v0.2.yaml`：
+程序会自动补充缺少的配置项：
 
 ```yaml
 chatbox:
@@ -179,7 +217,7 @@ python -m unittest discover -v
 pyinstaller --clean --noconfirm shocking_vrchat.spec
 ```
 
-PyInstaller 配置会把 `templates` 一并打包，生成的配置文件固定写入程序或源码所在目录。
+PyInstaller 生成无控制台的单文件 `dist\shocking_vrchat.exe`，配置不会写在 exe 旁，而是固定写入 `%APPDATA%\ShockingVRChat\`。
 
 ## FAQ
 
@@ -192,44 +230,21 @@ PyInstaller 配置会把 `templates` 一并打包，生成的配置文件固定�
 ### 应该如何设置上限
 
 - 建议通过郊狼 APP 内的被控设置进行调整，程序将跟随。
-- `settings-v*.*.yaml` 基础配置文件内的 `strength_limit` 也会限制强度上限，如果超过默认值 100，需要调整该参数。
+- 窗口“基本设置”内的 A/B 最大强度也会限制上限，如需超过默认值 100，请在窗口中调整后保存并重启服务。
 - 为保证强度自动跟随自动运行，请确认郊狼APP内 菜单-被控设置 中，两个通道的强度上限初始值（最小值）大于等于 1。
 
 ### 想用一个参数同时触发两个通道
 
-- 请将需要使用的参数，例如 `/avatar/parameters/pcs/contact/enterPass` 同时复制进基础配置文件 `settings-v*.*.yaml` 内 `channel_a` 和 `channel_b` 的 `avatar_params` 列表内，请注意缩进与行首的 `-` 。
+- 在窗口“A/B 参数”页把同一个参数同时粘贴到 A、B 两栏，然后保存并重启服务。
 
 ### OSC 端口冲突了怎么办
 
-报错中显示 `OSC监听失败` 或包含 `create_datagram_endpoint` 的 `WinError 10048` 为该问题。该问题一般是和面捕软件冲突导致。
+报错包含 `WinError 10048` 时，通常是本程序和面捕软件同时占用了 UDP 9001。无需再安装独立的 osc-repeater：
 
-```
-Exception in thread Thread-1 (async_main_wrapper):
-Traceback (most recent call last):
-  ...
-  File "shocking_vrchat.py", line 143, in async_main_wrapper
-  ...
-  File "shocking_vrchat.py", line 135, in async_main
-  File "asyncio\base_events.py", line 1387, in create_datagram_endpoint
-  File "asyncio\base_events.py", line 1371, in create_datagram_endpoint
-OSError: [WinError 10048] 通常每个套接字地址(协议/网络地址/端口)只允许使用一次。
-```
-1. 请前往 [osc-repeater](https://github.com/CyCoreSystems/osc-repeater) 从 Release 下载 osc-repeater
-2. 解压后在 `osc-repeater_x.x.x_windows_amd64.exe` 同目录创建配置文件，名为 `config.yaml`，文件内容：
-```
-listenPorts:
-  - 9001
-targets:
-  - "127.0.0.1:9011"
-  - "127.0.0.1:9021"
-```
-3. （可选）如果你的 VRChat 存在特殊OSC设置，请按照需要修改 `9001` 为实际端口号
-4. 在面捕软件中修改 OSC Receiver 端口号为 `9011`，保存后退出面捕软件
-5. 修改 ShockingVRChat 的 `settings-advanced-v*.*.yaml` 进阶配置，设置 `osc` 的 `listen_port` 为 `9021`
-6. **请确认已经退出**面捕程序和ShockingVRChat（本软件）
-7. 依次双击运行 `osc-repeater`、面捕程序、ShockingVRChat
-
-*以后使用时只执行步骤 7 即可，如果只用面捕也需要启动 `osc-repeater`
+1. 在“基本设置”勾选“启用端口分流”。
+2. 入口保留 `127.0.0.1:9001`，VRCFT 目标设为 `127.0.0.1:9011`，本程序内部目标设为 `127.0.0.1:9021`。
+3. 将面捕软件的 OSC Receiver 改为 9011。
+4. 退出其他仍占用 9001 的程序，再点击“保存并重启服务”。
 
 ### 控制台内有波形输出，但是没有强度或强度显著变小
 
@@ -238,7 +253,7 @@ targets:
 
 ### 程序看起来收不到 OSC 数据
 
-1. **如果你有面捕**，请检查 Steam 中 VRChat 的启动命令行参数，是否有类似 `--osc=9000:127.0.0.1:9001` 的配置，如有，请修改进阶配置文件，`osc` `listen_port` 的值为最后一个冒号后的值，如 9001。
+1. **如果你有面捕**，请检查 Steam 中 VRChat 的启动命令行参数，是否有类似 `--osc=9000:127.0.0.1:9001` 的配置；窗口中的“OSC / 分流入口”应与最后一个端口一致。
 2. Action Menu 中选择 Options > OSC > Reset Config 重置 OSC 配置
 3. 如果之前是正常使用的，但忽然收不到，重启电脑可以解决问题，似乎是 VRChat 的 Bug。
 4. 目前**已知会占用 UDP 9000 端口导致 VRChat OSC组件启动失败的程序**，请退出以下程序并重置OSC。
@@ -259,8 +274,7 @@ targets:
 
 ### 程序版本更新后配置文件如何继承？
 
-- 程序版本与配置文件版本分离，如果仅仅是程序版本更新，配置文件无需改动即可继承使用。
-- 如果配置文件版本发生更新，原配置不会被覆盖，请观察新配置文件的变更位置，将需要保留的参数填入新配置文件。
+- v0.3 首次启动会自动迁移 v0.2 配置并保留原文件。之后同版本更新会继续使用 `%APPDATA%\ShockingVRChat\settings-v0.3.yaml`。
 
 ### OSC 能收到其他参数但收不到模型的参数
 

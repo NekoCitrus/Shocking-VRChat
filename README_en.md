@@ -12,12 +12,28 @@ Our VRChat Group: [ShockingVRC https://vrc.group/SHOCK.2911](https://vrc.group/S
 ## Usage
 
 1. Go to [Project Release](https://github.com/VRChatNext/Shocking-VRChat/releases) to download the latest version of the Shocking-VRChat tool.
-2. Run the exe program for the first time, which will generate a settings file in the current directory and then exit.
-3. Fill in `avatar_params` and the working mode (shock/distance) in the configuration file `settings-v*.*.yaml`.
-4. (Optional) Modify the advanced configuration file `settings-advanced-v*.*.yaml` as needed. Refer to the advanced configuration file reference for parameter meanings.
-5. Run the program again and check if the Windows Firewall security warning pops up. If it does, choose to allow it to accept the connection from the Coyote APP.
-6. Launch the DG-LAB 3.0 APP and use the Socket control function to scan the QR code from the pop-up window.
-7. Enjoy VRChat!
+2. Run the exe. The lightweight desktop window opens and starts the background services automatically.
+3. Set the OSC endpoint and A/B strength limits under **General**, then enter one `/avatar/parameters/...` path per line under **A/B Parameters**.
+4. Select **Save and restart service**. Allow the app through Windows Firewall if prompted.
+5. In the DG-LAB 3.0 app, open Socket control and scan the QR code on the right.
+6. If background operation is enabled, closing the window hides it to the real Windows notification area. Use the tray menu to reopen or exit.
+
+## Desktop UI
+
+- **General:** listener endpoint, A/B limits, Chatbox, background operation, and UDP relay.
+- **A/B Parameters:** simple per-line editing, wildcard `*` support, bulk paste, and automatic deduplication.
+- **Runtime Debug:** live parameter, raw OSC value, mapped percentage, and actual output for one Coyote device.
+- **UDP Relay:** forwards every incoming datagram unchanged to VRCFT (default `127.0.0.1:9011`) and this app (default `127.0.0.1:9021`).
+
+Only one Coyote device is accepted. Additional device connections are rejected.
+
+## Configuration location
+
+```text
+%APPDATA%\ShockingVRChat\settings-v0.3.yaml
+```
+
+The log is stored as `shocking-vrchat.log` in the same directory. On the first v0.3 run, existing v0.2 files beside the exe/source are migrated automatically and are not deleted.
 
 ## Working Mode Explanation
 
@@ -39,27 +55,36 @@ Our VRChat Group: [ShockingVRC https://vrc.group/SHOCK.2911](https://vrc.group/S
     - When received OSC data is greater than `bottom`, it triggers the shock.
     - The `top` parameter is ignored in shock mode.
 
-## Basic Configuration File Reference
+## Configuration File Reference
 
-The configuration file format is `yaml`. The current configuration file version: `v0.2`.
+The configuration format is YAML, version `v0.3`. UI-managed channels are stored under `channels.dglab3`; advanced options are stored under `settings`.
 
 ```yaml
-dglab3:
-  channel_a:
-    avatar_params:
-    # Fill in OSC listening parameters here. You can use wildcards * to match any string. Be sure to maintain proper indentation and prefix with "- ".
-    # Refer to https://python-osc.readthedocs.io/en/latest/dispatcher.html#mapping
-    - /avatar/parameters/pcs/contact/enterPass
-    - /avatar/parameters/Shock/wildcard/*
-    mode: distance # Working mode, here is distance mode
-    strength_limit: 100 # Strength limit, the program will take the maximum of this strength and the host's set strength
-  channel_b:
-    avatar_params:
-    - /avatar/parameters/lms-penis-proximityA*
-    - /avatar/parameters/ShockB2/some/param
-    mode: shock # Working mode, here is shock mode
-    strength_limit: 100
-version: v0.2
+version: v0.3
+channels:
+  version: v0.3
+  dglab3:
+    channel_a:
+      avatar_params:
+      - /avatar/parameters/pcs/contact/enterPass
+      - /avatar/parameters/Shock/wildcard/*
+      mode: distance
+      strength_limit: 100 # The smaller of this and the DG-LAB app limit is used
+    channel_b:
+      avatar_params:
+      - /avatar/parameters/lms-penis-proximityA*
+      - /avatar/parameters/ShockB2/some/param
+      mode: shock
+      strength_limit: 100
+settings:
+  version: v0.3
+  osc:
+    listen_host: 127.0.0.1
+    listen_port: 9001
+  relay:
+    enabled: false
+    vrcft_port: 9011
+    internal_port: 9021
 ```
 
 ## Model Parameter Configuration
@@ -98,7 +123,9 @@ version: v0.2
   - /avatar/parameters/lms-stroke-out*
   - /avatar/parameters/lms-stroke-smash
 
-## Advanced Configuration File Reference
+## Advanced Configuration Reference
+
+The following excerpt belongs inside the top-level `settings` section:
 
 ```yaml
 SERVER_IP: null # When null, the program will attempt to automatically obtain the local IP. If incorrect, change null to the correct IP address (the one that the phone can access, usually the wired network or WiFi)
@@ -131,7 +158,7 @@ dglab3:
         bottom: 0.1
         top: 0.8
 general: # General configuration
-  auto_open_qr_web_page: true # Automatically open the scan code web page when the program starts
+  run_in_background: true
   local_ip_detect:  # Server address for detecting local IP
     host: 223.5.5.5 # Default is AliDNS. If used outside mainland China, modify accordingly
     port: 80
@@ -139,7 +166,7 @@ log_level: INFO # Log level, can be changed to DEBUG for troubleshooting
 osc: # OSC service configuration
   listen_host: 127.0.0.1 # If VRChat runs on another host, change to 0.0.0.0 and configure VRChat with the correct OSC startup command line parameters.
   listen_port: 9001
-version: v0.2 # Configuration file version
+version: v0.3 # Configuration file version
 web_server: # Web server configuration
   listen_host: 127.0.0.1 # If you need to open the web page for scanning from another host, change to 0.0.0.0
   listen_port: 8800
@@ -151,7 +178,7 @@ ws: # WebSocket service configuration
 
 ### Chatbox and control API settings
 
-Missing options are added automatically to `settings-advanced-v0.2.yaml`:
+Missing options are added automatically to the unified v0.3 configuration:
 
 ```yaml
 chatbox:
@@ -176,7 +203,7 @@ python -m unittest discover -v
 pyinstaller --clean --noconfirm shocking_vrchat.spec
 ```
 
-The PyInstaller specification includes the `templates` directory. Configuration files are written next to the executable or source entry point.
+PyInstaller produces the console-free single file `dist\shocking_vrchat.exe`. Configuration is always written under `%APPDATA%\ShockingVRChat\`, not beside the executable.
 
 ## FAQ
 

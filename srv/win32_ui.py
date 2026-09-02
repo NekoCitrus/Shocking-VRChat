@@ -6,8 +6,8 @@ directly with GDI, so no image toolkit or browser process is required.
 
 import copy
 import ctypes
-import os
 import queue
+import socket
 import sys
 import threading
 import traceback
@@ -225,6 +225,7 @@ class DesktopApplication:
         self.events = queue.Queue()
         self.action_running = False
         self.exiting = False
+        self.pending_exit = False
         self.tray_data = None
         self.qr_matrix = []
         self._last_snapshot = None
@@ -494,6 +495,9 @@ class DesktopApplication:
                     self._message(f'操作失败：{event["error"]}', error=True)
                 if event.get('action') == 'exit':
                     user32.DestroyWindow(self.hwnd)
+                elif self.pending_exit:
+                    self.pending_exit = False
+                    self._start_action('exit')
             elif event_type == 'device':
                 self._set_text('device_status', '郊狼：已连接' if event.get('connected') else '郊狼：未连接')
 
@@ -520,9 +524,20 @@ class DesktopApplication:
             user32.SendMessageW(self.controls[f'debug_progress_{channel}'], PBM_SETPOS, int(percentage * 1000), 0)
 
     def _refresh_qr(self):
-        from shocking_vrchat import build_qr_content, detect_current_ip
-
-        content = build_qr_content(self.settings, self.settings.get('SERVER_IP') or detect_current_ip(self.settings))
+        server_ip = self.settings.get('SERVER_IP')
+        if not server_ip:
+            try:
+                target = self.settings['general']['local_ip_detect']
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                    sock.settimeout(2.0)
+                    sock.connect((target['host'], target['port']))
+                    server_ip = sock.getsockname()[0]
+            except OSError:
+                server_ip = '127.0.0.1'
+        content = (
+            'https://www.dungeon-lab.com/app-download.php#DGLAB-SOCKET#'
+            f'ws://{server_ip}:{self.settings["ws"]["listen_port"]}/{self.settings["ws"]["master_uuid"]}'
+        )
         qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_L, border=2, box_size=1)
         qr.add_data(content)
         qr.make(fit=True)
@@ -602,7 +617,10 @@ class DesktopApplication:
             return
         self.exiting = True
         user32.ShowWindow(self.hwnd, SW_HIDE)
-        self._start_action('exit')
+        if self.action_running:
+            self.pending_exit = True
+        else:
+            self._start_action('exit')
 
     def _message(self, text, error=False):
         user32.MessageBoxW(self.hwnd, str(text), 'ShockingVRChat', 0x10 if error else 0x40)
