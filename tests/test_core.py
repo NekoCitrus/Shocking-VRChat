@@ -3,6 +3,7 @@ import copy
 import json
 import unittest
 import uuid
+from urllib.parse import parse_qs, unquote, urlsplit
 from unittest.mock import AsyncMock, patch
 
 import shocking_vrchat
@@ -126,6 +127,47 @@ class ConfigAndApiTests(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             shocking_vrchat.normalize_wave_request('C', 2, '0A0A0A0A64646464')
+
+    def test_qr_content_uses_official_v4_pairing_format(self):
+        content = shocking_vrchat.build_qr_content(self.settings, server_ip='192.168.1.8')
+        parsed = urlsplit(content)
+        self.assertEqual(parsed.scheme, 'https')
+        self.assertEqual(parsed.netloc, 'dungeon-lab.cn')
+        self.assertEqual(parsed.path, '/s/')
+        query = parse_qs(parsed.query)
+        self.assertEqual(query['v'], ['1'])
+        self.assertEqual(query['action'], ['socket'])
+        websocket_url = unquote(query['url'][0])
+        self.assertEqual(
+            websocket_url,
+            f'ws://192.168.1.8:{self.settings["ws"]["listen_port"]}/'
+            f'?tid={self.settings["ws"]["master_uuid"]}',
+        )
+        self.assertEqual(
+            websocket_url,
+            shocking_vrchat.build_websocket_url(self.settings, server_ip='192.168.1.8'),
+        )
+
+    @patch('shocking_vrchat.socket.getaddrinfo')
+    @patch('shocking_vrchat.socket.socket')
+    def test_lan_ip_detection_falls_back_to_adapter_addresses(self, socket_factory, getaddrinfo):
+        socket_factory.return_value.__enter__.return_value.connect.side_effect = OSError
+        getaddrinfo.return_value = [
+            (2, 2, 17, '', ('127.0.0.1', 0)),
+            (2, 2, 17, '', ('192.168.50.12', 0)),
+        ]
+        self.assertEqual(shocking_vrchat.detect_current_ip(self.settings), '192.168.50.12')
+
+    @patch('shocking_vrchat.socket.getaddrinfo')
+    @patch('shocking_vrchat.socket.socket')
+    def test_lan_ip_detection_ignores_proxy_benchmark_adapter(self, socket_factory, getaddrinfo):
+        route_socket = socket_factory.return_value.__enter__.return_value
+        route_socket.getsockname.return_value = ('198.18.0.1', 53123)
+        getaddrinfo.return_value = [
+            (2, 2, 17, '', ('198.18.0.1', 0)),
+            (2, 2, 17, '', ('192.168.5.2', 0)),
+        ]
+        self.assertEqual(shocking_vrchat.detect_current_ip(self.settings), '192.168.5.2')
 
 
 class ChatboxTests(unittest.TestCase):

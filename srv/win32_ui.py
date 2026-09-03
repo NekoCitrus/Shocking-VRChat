@@ -7,7 +7,6 @@ directly with GDI, so no image toolkit or browser process is required.
 import copy
 import ctypes
 import queue
-import socket
 import sys
 import threading
 import traceback
@@ -502,14 +501,27 @@ class DesktopApplication:
                     self.pending_exit = False
                     self._start_action('exit')
             elif event_type == 'device':
-                self._set_text('device_status', '郊狼：已连接' if event.get('connected') else '郊狼：未连接')
+                if event.get('connected'):
+                    device = '郊狼：已连接'
+                elif event.get('app_connected'):
+                    protocol = str(event.get('protocol', '')).upper()
+                    device = f'APP：已连接（{protocol}，等待郊狼）'
+                else:
+                    device = 'APP：未连接'
+                self._set_text('device_status', device)
 
     def _refresh_snapshot(self):
         snapshot = self.controller.snapshot()
         if snapshot == self._last_snapshot:
             return
         self._last_snapshot = snapshot
-        device = '郊狼：已连接' if snapshot['connected'] else '郊狼：未连接'
+        protocol = str(snapshot.get('protocol', '')).upper()
+        if snapshot['connected']:
+            device = f'郊狼：已连接（{protocol}）'
+        elif snapshot.get('app_connected'):
+            device = f'APP：已连接（{protocol}，等待郊狼）'
+        else:
+            device = 'APP：未连接'
         if snapshot['connected'] and snapshot['device_id']:
             device += f'  ({snapshot["device_id"][:8]})'
         self._set_text('device_status', device)
@@ -529,24 +541,19 @@ class DesktopApplication:
     def _refresh_qr(self):
         server_ip = self.settings.get('SERVER_IP')
         if not server_ip:
-            try:
-                target = self.settings['general']['local_ip_detect']
-                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-                    sock.settimeout(2.0)
-                    sock.connect((target['host'], target['port']))
-                    server_ip = sock.getsockname()[0]
-            except OSError:
-                server_ip = '127.0.0.1'
-        content = (
-            'https://www.dungeon-lab.com/app-download.php#DGLAB-SOCKET#'
-            f'ws://{server_ip}:{self.settings["ws"]["listen_port"]}/{self.settings["ws"]["master_uuid"]}'
-        )
+            from shocking_vrchat import detect_current_ip
+
+            server_ip = detect_current_ip(self.settings)
+        from shocking_vrchat import build_qr_content, build_websocket_url
+
+        content = build_qr_content(self.settings, server_ip=server_ip)
+        websocket_url = build_websocket_url(self.settings, server_ip=server_ip)
         qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_L, border=2, box_size=1)
         qr.add_data(content)
         qr.make(fit=True)
         self.qr_matrix = qr.get_matrix()
         if 'qr_content' in self.controls:
-            self._set_text('qr_content', content)
+            self._set_text('qr_content', websocket_url)
         if self.hwnd:
             user32.InvalidateRect(self.hwnd, None, False)
 

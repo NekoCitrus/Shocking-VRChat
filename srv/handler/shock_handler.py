@@ -174,15 +174,9 @@ class ShockHandler(BaseHandler):
             )
 
     async def distance_background_wave_feeder(self):
-        tick_time_window = self.distance_update_time_window / 20
-        next_tick_time   = 0
         last_strength    = 0
         while 1:
-            current_time = time.monotonic()
-            if current_time < next_tick_time:
-                await asyncio.sleep(tick_time_window)
-                continue
-            next_tick_time = current_time + self.distance_update_time_window
+            await asyncio.sleep(self.distance_update_time_window)
             current_strength = self.distance_current_strength
             if current_strength == last_strength == 0:
                 continue
@@ -191,7 +185,13 @@ class ShockHandler(BaseHandler):
                 last_strength, 
                 current_strength
             )
-            logger.success(f'Channel {self.channel}, strength {last_strength:.3f} to {current_strength:.3f}, Sending {wave}')
+            logger.debug(
+                'Channel {}, strength {:.3f} to {:.3f}, Sending {}',
+                self.channel,
+                last_strength,
+                current_strength,
+                wave,
+            )
             last_strength = current_strength
             await self.DG_CONN.broadcast_wave(self.channel, wavestr=wave)
     

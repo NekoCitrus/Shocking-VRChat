@@ -1,6 +1,7 @@
 import asyncio
 import copy
 import hmac
+import ipaddress
 import json
 import math
 import socket
@@ -10,6 +11,7 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 from functools import wraps
 from pathlib import Path
 from threading import Event, RLock, Thread
+from urllib.parse import parse_qs, quote, urlsplit
 
 from flask import Flask, jsonify, redirect, render_template, request
 from loguru import logger
@@ -31,6 +33,7 @@ from srv.config_manager import (
     validate_config,
 )
 from srv.connector.coyotev3ws import DGConnection
+from srv.connector.coyotev4ws import DGV4Connection
 from srv.handler.machine_handler import TuYaConnection, TuyaHandler
 from srv.handler.shock_handler import ShockHandler
 from srv.udp_relay import create_udp_relay
@@ -47,6 +50,11 @@ CONFIG_FILENAME = None
 CONFIG_FILENAME_BASIC = None
 SERVER_IP = '127.0.0.1'
 ACTIVE_CONTROLLER = None
+RFC1918_NETWORKS = tuple(
+    ipaddress.ip_network(network)
+    for network in ('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16')
+)
+CGNAT_NETWORK = ipaddress.ip_network('100.64.0.0/10')
 
 
 def configure_console_encoding():
@@ -64,23 +72,68 @@ configure_console_encoding()
 
 def detect_current_ip(settings=None):
     current = settings or SETTINGS
+    candidates = []
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.settimeout(2.0)
             target = current['general']['local_ip_detect']
             sock.connect((target['host'], target['port']))
-            return sock.getsockname()[0]
+            candidates.append(sock.getsockname()[0])
     except OSError:
-        logger.warning('无法自动检测局域网 IP，二维码暂时使用 127.0.0.1。')
-        return '127.0.0.1'
+        pass
+    try:
+        candidates.extend(
+            item[4][0]
+            for item in socket.getaddrinfo(
+                socket.gethostname(),
+                None,
+                family=socket.AF_INET,
+                type=socket.SOCK_DGRAM,
+            )
+        )
+    except OSError:
+        pass
+    usable = []
+    for order, candidate in enumerate(dict.fromkeys(candidates)):
+        try:
+            address = ipaddress.ip_address(candidate)
+        except ValueError:
+            continue
+        if address.is_loopback or address.is_link_local or address.is_unspecified:
+            continue
+        if any(address in network for network in RFC1918_NETWORKS):
+            priority = 0
+        elif address.is_global:
+            priority = 1
+        elif address in CGNAT_NETWORK:
+            priority = 2
+        else:
+            # Excludes benchmark and documentation ranges commonly used by
+            # VPN/proxy virtual adapters (for example 198.18.0.0/15).
+            continue
+        usable.append((priority, order, candidate))
+    if usable:
+        return min(usable)[2]
+    logger.warning('无法自动检测局域网 IP，二维码暂时使用 127.0.0.1。')
+    return '127.0.0.1'
+
+
+def build_websocket_url(settings=None, server_ip=None):
+    current = settings or SETTINGS
+    ip = server_ip or current.get('SERVER_IP') or SERVER_IP or detect_current_ip(current)
+    if ':' in ip and not ip.startswith('['):
+        ip = f'[{ip}]'
+    return (
+        f'ws://{ip}:{current["ws"]["listen_port"]}/'
+        f'?tid={current["ws"]["master_uuid"]}'
+    )
 
 
 def build_qr_content(settings=None, server_ip=None):
-    current = settings or SETTINGS
-    ip = server_ip or current.get('SERVER_IP') or SERVER_IP or detect_current_ip(current)
+    websocket_url = build_websocket_url(settings, server_ip)
     return (
-        'https://www.dungeon-lab.com/app-download.php#DGLAB-SOCKET#'
-        f'ws://{ip}:{current["ws"]["listen_port"]}/{current["ws"]["master_uuid"]}'
+        'https://dungeon-lab.cn/s/?v=1&action=socket&url='
+        f'{quote(websocket_url, safe="")}'
     )
 
 
@@ -146,7 +199,11 @@ def api_v1_status():
 
 
 def build_status_response():
-    connections = srv.get_ws_connections()
+    connections = tuple(
+        connection
+        for connection in srv.get_ws_connections()
+        if getattr(connection, 'is_device_ready', lambda: True)()
+    )
     return {
         'healthy': 'ok',
         'service': ACTIVE_CONTROLLER.state if ACTIVE_CONTROLLER else 'stopped',
@@ -288,12 +345,33 @@ class DeviceRuntime:
             await connection.close(code=1008, reason='Only one device is supported')
             logger.warning('已拒绝第二台郊狼设备连接。')
             return
-        client = DGConnection(connection, SETTINGS=self.settings)
-        self._emit({'type': 'device', 'connected': True})
+        request_path = getattr(getattr(connection, 'request', None), 'path', '/')
+        parsed = urlsplit(request_path)
+        query = parse_qs(parsed.query)
+        target_ids = query.get('tid') or query.get('targetId')
+        if target_ids:
+            if target_ids[0] != str(self.settings['ws']['master_uuid']):
+                await connection.close(code=1008, reason='Unknown controller id')
+                logger.warning('已拒绝目标 ID 不匹配的 V4 连接。')
+                return
+            client = DGV4Connection(connection, settings=self.settings)
+        else:
+            expected_path = f'/{self.settings["ws"]["master_uuid"]}'
+            if parsed.path.rstrip('/') != expected_path:
+                await connection.close(code=1008, reason='Invalid pairing path')
+                logger.warning('已拒绝配对路径无效的 WebSocket 连接。')
+                return
+            client = DGConnection(connection, SETTINGS=self.settings)
+        self._emit({
+            'type': 'device',
+            'connected': False,
+            'app_connected': True,
+            'protocol': client.protocol_version,
+        })
         try:
             await client.serve()
         finally:
-            self._emit({'type': 'device', 'connected': False})
+            self._emit({'type': 'device', 'connected': False, 'app_connected': False})
 
     async def _chatbox_task(self):
         while True:
@@ -336,6 +414,9 @@ class DeviceRuntime:
                 self._websocket_handler,
                 self.settings['ws']['listen_host'],
                 self.settings['ws']['listen_port'],
+                ping_interval=10,
+                ping_timeout=30,
+                max_queue=32,
             ):
                 self.ready.set()
                 self._emit({'type': 'service', 'state': 'running'})
@@ -384,6 +465,10 @@ class DeviceRuntime:
 
     def snapshot(self):
         connection = next(iter(srv.get_ws_connections()), None)
+        device_ready = bool(
+            connection
+            and getattr(connection, 'is_device_ready', lambda: True)()
+        )
         channels = {}
         for handler in self.handlers:
             if not isinstance(handler, ShockHandler):
@@ -396,8 +481,13 @@ class DeviceRuntime:
                 'upper_strength': upper,
             }
         return {
-            'connected': connection is not None,
-            'device_id': connection.uuid if connection else '',
+            'connected': device_ready,
+            'app_connected': connection is not None,
+            'protocol': getattr(connection, 'protocol_version', '') if connection else '',
+            'device_id': (
+                getattr(connection, 'slot_id', None) or connection.uuid
+                if device_ready else ''
+            ),
             'relay_packets': self.relay_packets,
             'channels': channels,
         }

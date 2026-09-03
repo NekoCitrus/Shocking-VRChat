@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import json
 import socket
 import tempfile
 import threading
@@ -10,7 +11,10 @@ from unittest.mock import patch
 
 import yaml
 from pythonosc.udp_client import SimpleUDPClient
+from websockets.asyncio.client import connect as websocket_connect
+from websockets.exceptions import ConnectionClosedError
 
+import srv
 from shocking_vrchat import ServiceController
 from srv.config_manager import (
     DEFAULT_BASIC_SETTINGS,
@@ -267,6 +271,183 @@ class ServiceControllerTests(unittest.TestCase):
         self.assertIsNone(controller.web_thread)
         self.assertIsNone(controller.runtime)
         self.assertEqual(controller.state, 'error')
+
+
+class WebSocketPairingTests(unittest.IsolatedAsyncioTestCase):
+    def make_settings(self):
+        settings = copy.deepcopy(DEFAULT_SETTINGS)
+        basic = copy.deepcopy(DEFAULT_BASIC_SETTINGS)
+        settings['SERVER_IP'] = '127.0.0.1'
+        settings['ws']['master_uuid'] = '86c053e8-4ce1-466b-b123-9e2944b8c490'
+        settings['ws']['listen_host'] = '127.0.0.1'
+        settings['ws']['listen_port'] = free_tcp_port()
+        settings['web_server']['listen_port'] = free_tcp_port()
+        settings['osc']['listen_port'] = free_udp_port()
+        settings['chatbox']['enable'] = False
+        basic['dglab3']['channel_a']['avatar_params'] = ['/avatar/parameters/v4-test']
+        return settings, basic
+
+    async def wait_for_message_type(self, websocket, frame_type, timeout=2):
+        deadline = asyncio.get_running_loop().time() + timeout
+        while True:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                self.fail(f'未收到 V4 {frame_type} 帧')
+            frame = json.loads(await asyncio.wait_for(websocket.recv(), remaining))
+            if frame.get('type') == frame_type:
+                return frame
+
+    async def test_official_v4_pairing_snapshot_ping_and_wave_flow(self):
+        settings, basic = self.make_settings()
+        controller = ServiceController()
+        client = None
+        try:
+            controller.start(settings, basic)
+            uri = (
+                f'ws://127.0.0.1:{settings["ws"]["listen_port"]}/'
+                f'?tid={settings["ws"]["master_uuid"]}'
+            )
+            async with websocket_connect(uri) as websocket:
+                hello = json.loads(await asyncio.wait_for(websocket.recv(), 2))
+                attached = json.loads(await asyncio.wait_for(websocket.recv(), 2))
+                devices_request = json.loads(await asyncio.wait_for(websocket.recv(), 2))
+                self.assertEqual(hello['type'], 'hello')
+                self.assertRegex(hello['clientId'], r'^[0-9a-f]{8}$')
+                self.assertEqual(
+                    attached,
+                    {'type': 'controller_attached', 'clientId': settings['ws']['master_uuid']},
+                )
+                self.assertEqual(devices_request['type'], 'message')
+                self.assertEqual(devices_request['data']['m'], 'devices.get')
+                self.assertTrue(controller.snapshot()['app_connected'])
+                self.assertFalse(controller.snapshot()['connected'])
+
+                await websocket.send(json.dumps({'type': 'ping'}))
+                pong = await self.wait_for_message_type(websocket, 'pong')
+                self.assertIsInstance(pong['ts'], int)
+
+                await websocket.send(json.dumps({
+                    'type': 'message',
+                    'data': {
+                        't': 'ev',
+                        'ev': 'devices.snapshot',
+                        'devices': [{
+                            'slotId': 'coyote-slot',
+                            'name': 'Coyote 3',
+                            'type': 'COYOTE_030',
+                            'props': {'intensityA': 12, 'intensityB': 7},
+                            'slotState': {
+                                'hasDevice': True,
+                                'channelA': {'intensityMax': 80},
+                                'channelB': {'intensityMax': 60},
+                            },
+                        }],
+                    },
+                }))
+                deadline = time.monotonic() + 2
+                snapshot = {}
+                while time.monotonic() < deadline:
+                    snapshot = controller.snapshot()
+                    if snapshot.get('connected'):
+                        break
+                    await asyncio.sleep(0.02)
+                self.assertTrue(snapshot['connected'])
+                self.assertEqual(snapshot['protocol'], 'v4')
+                self.assertEqual(snapshot['device_id'], 'coyote-slot')
+                self.assertEqual(snapshot['channels']['A']['upper_strength'], 80)
+
+                client = SimpleUDPClient('127.0.0.1', settings['osc']['listen_port'])
+                client.send_message('/avatar/parameters/v4-test', [0.4])
+                deadline = asyncio.get_running_loop().time() + 2
+                operation = None
+                strength_operations = []
+                while asyncio.get_running_loop().time() < deadline:
+                    remaining = deadline - asyncio.get_running_loop().time()
+                    frame = json.loads(await asyncio.wait_for(websocket.recv(), remaining))
+                    data = frame.get('data') or {}
+                    if frame.get('type') == 'message' and data.get('m') == 'device.op':
+                        candidate = data['data']
+                        if candidate.get('t') == 0:
+                            operation = candidate
+                            break
+                        strength_operations.append(candidate)
+                self.assertIsNotNone(operation)
+                self.assertEqual(
+                    [(item['c'], item['t'], item['v']) for item in strength_operations],
+                    [(0, 3, 68), (1, 3, 53)],
+                )
+                self.assertEqual(operation['s'], 'coyote-slot')
+                self.assertEqual(operation['t'], 0)
+                self.assertEqual(operation['c'], 0)
+                self.assertEqual(operation['d'], 100)
+                self.assertTrue(operation['im'])
+
+                await websocket.send(json.dumps({
+                    'type': 'message',
+                    'data': {
+                        't': 'ev',
+                        'ev': 'slots.patch',
+                        'slots': [{
+                            'slotId': 'coyote-slot',
+                            'slotState': {'hasDevice': False},
+                        }],
+                    },
+                }))
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline and controller.snapshot()['connected']:
+                    await asyncio.sleep(0.02)
+                snapshot = controller.snapshot()
+                self.assertFalse(snapshot['connected'])
+                self.assertTrue(snapshot['app_connected'])
+        finally:
+            if client is not None:
+                client._sock.close()
+            controller.stop()
+            self.assertEqual(srv.get_ws_connections(), ())
+
+    async def test_wrong_v4_target_id_is_rejected(self):
+        settings, basic = self.make_settings()
+        controller = ServiceController()
+        try:
+            controller.start(settings, basic)
+            uri = f'ws://127.0.0.1:{settings["ws"]["listen_port"]}/?tid=wrong'
+            async with websocket_connect(uri) as websocket:
+                with self.assertRaises(ConnectionClosedError) as raised:
+                    await websocket.recv()
+                self.assertEqual(raised.exception.code, 1008)
+        finally:
+            controller.stop()
+
+    async def test_legacy_v3_pairing_path_remains_compatible(self):
+        settings, basic = self.make_settings()
+        controller = ServiceController()
+        try:
+            controller.start(settings, basic)
+            uri = (
+                f'ws://127.0.0.1:{settings["ws"]["listen_port"]}/'
+                f'{settings["ws"]["master_uuid"]}'
+            )
+            async with websocket_connect(uri) as websocket:
+                bind = json.loads(await asyncio.wait_for(websocket.recv(), 2))
+                self.assertEqual(bind['type'], 'bind')
+                self.assertEqual(bind['message'], 'targetId')
+                await websocket.send(json.dumps({
+                    'type': 'bind',
+                    'clientId': settings['ws']['master_uuid'],
+                    'targetId': bind['clientId'],
+                    'message': 'targetId',
+                }))
+                result = json.loads(await asyncio.wait_for(websocket.recv(), 2))
+                self.assertEqual(result['type'], 'bind')
+                self.assertEqual(result['message'], '200')
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline and not controller.snapshot()['connected']:
+                    await asyncio.sleep(0.02)
+                snapshot = controller.snapshot()
+                self.assertTrue(snapshot['connected'])
+                self.assertEqual(snapshot['protocol'], 'v3')
+        finally:
+            controller.stop()
 
 
 class DesktopApplicationTests(unittest.TestCase):

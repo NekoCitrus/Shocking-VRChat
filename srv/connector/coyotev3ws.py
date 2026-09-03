@@ -30,6 +30,8 @@ class DGWSMessage:
 
 
 class DGConnection:
+    protocol_version = 'v3'
+
     def __init__(self, ws_connection: ServerConnection, client_uuid=None, SETTINGS: dict = None) -> None:
         if SETTINGS is None:
             raise ValueError('DGConnection SETTINGS not provided.')
@@ -44,6 +46,7 @@ class DGConnection:
             'A': SETTINGS['dglab3']['channel_a']['strength_limit'],
             'B': SETTINGS['dglab3']['channel_b']['strength_limit'],
         }
+        self.bound = False
         # websockets 不允许并发 send；所有波形、心跳和强度更新共用一把锁。
         self._send_lock = asyncio.Lock()
         add_ws_connection(self)
@@ -51,8 +54,11 @@ class DGConnection:
     def __str__(self):
         return f'<DGConnection (id:{self.uuid}, {self.strength}, max {self.strength_max})>'
 
+    def is_device_ready(self):
+        return self.bound
+
     async def send_text(self, message):
-        logger.debug(f'ID {self.uuid}, SENDING {message}')
+        logger.debug('ID {}, SENDING {}', self.uuid, message)
         async with self._send_lock:
             await self.ws_conn.send(message)
 
@@ -63,6 +69,7 @@ class DGConnection:
             if msg.clientId != self.master_uuid:
                 raise ValueError('Binding to unknown uuid.')
             await DGWSMessage('bind', clientId=msg.clientId, targetId=msg.targetId, message='200').send(self)
+            self.bound = True
             return
 
         if msg.type == 'msg':
@@ -184,6 +191,13 @@ class DGConnection:
     async def _broadcast(method_name, *args, **kwargs):
         connections = get_ws_connections()
         if not connections:
+            return
+        if len(connections) == 1:
+            connection = connections[0]
+            try:
+                await getattr(connection, method_name)(*args, **kwargs)
+            except Exception as exc:
+                logger.warning(f'Broadcast to {connection.uuid} failed: {exc}')
             return
         results = await asyncio.gather(
             *(getattr(conn, method_name)(*args, **kwargs) for conn in connections),

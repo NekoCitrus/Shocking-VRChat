@@ -15,14 +15,14 @@ Our VRChat Group: [ShockingVRC https://vrc.group/SHOCK.2911](https://vrc.group/S
 2. Run the exe. The lightweight desktop window opens and starts the background services automatically.
 3. Set the OSC endpoint and A/B strength limits under **General**, then enter one `/avatar/parameters/...` path per line under **A/B Parameters**.
 4. Select **Save and restart service**. Allow the app through Windows Firewall if prompted.
-5. In the DG-LAB 3.0 app, open Socket control and scan the QR code on the right.
+5. In the latest DG-LAB app, open Socket control and scan the QR code on the right. The QR code uses the officially recommended Socket V4 protocol while legacy V3 connections remain supported.
 6. If background operation is enabled, closing the window hides it to the real Windows notification area. Use the tray menu to reopen or exit.
 
 ## Desktop UI
 
 - **General:** listener endpoint, A/B limits, Chatbox, background operation, and UDP relay.
 - **A/B Parameters:** simple per-line editing, wildcard `*` support, bulk paste, and automatic deduplication.
-- **Runtime Debug:** live parameter, raw OSC value, mapped percentage, and actual output for one Coyote device.
+- **Runtime Debug:** live parameter, raw OSC value, mapped percentage, and actual output for one Coyote device. The status distinguishes an unconnected app, an attached app waiting for Bluetooth, and a ready Coyote device.
 - **UDP Relay:** forwards every incoming datagram unchanged to VRCFT (default `127.0.0.1:9011`) and this app (default `127.0.0.1:9021`).
 
 Only one Coyote device is accepted. Additional device connections are rejected.
@@ -242,9 +242,10 @@ PyInstaller produces the console-free single file `dist\shocking_vrchat.exe`. Co
 ### The APP cannot connect/connection times out when scanning the QR code.
 
 1. Make sure the phone and computer are on the same network, for example, the phone cannot use mobile data.
-2. Check the IP address displayed on the QR code webpage, such as ws://192.168.1.2:28846/. Is this IP address correct for your network card?
+2. Check the connection address below the QR code, such as `ws://192.168.1.2:28846/?tid=...`. The IP must be reachable from the phone and must not be `127.0.0.1`.
 3. If the IP is incorrect, fill in the correct IP address in the advanced configuration file under `SERVER_IP:` and restart the program to try again.
 4. Check if the Windows firewall allows this program to access the network (accept incoming connections).
+5. Current QR codes use the official DG-LAB Socket V4 format. If the status says that the V4 app is connected but waiting for Coyote, scanning and networking are working; connect the Coyote over Bluetooth in the app.
 
 ### How to inherit configuration files after program updates?
 
@@ -257,7 +258,7 @@ PyInstaller produces the console-free single file `dist\shocking_vrchat.exe`. Co
 
 ## Credits
 
-Thanks to [DG-LAB-OPENSOURCE](https://github.com/DG-LAB-OPENSOURCE/DG-LAB-OPENSOURCE). Praise the open-source spirit of DG-LAB!
+Thanks to the official [dungeonlab-open/dglab-websocket-server](https://github.com/dungeonlab-open/dglab-websocket-server) and [dglab-kit](https://github.com/dungeonlab-open/dglab-kit) V3/V4 implementations.
 
 -----
 
