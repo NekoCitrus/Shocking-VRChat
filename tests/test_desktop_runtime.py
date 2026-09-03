@@ -25,7 +25,7 @@ from srv.config_manager import (
     validate_config,
 )
 from srv.udp_relay import create_udp_relay
-from srv.win32_ui import DesktopApplication
+from srv.win32_ui import COPYRIGHT_ENTRIES, DesktopApplication
 
 
 def free_udp_port():
@@ -451,6 +451,16 @@ class WebSocketPairingTests(unittest.IsolatedAsyncioTestCase):
 
 
 class DesktopApplicationTests(unittest.TestCase):
+    def test_copyright_page_lists_all_requested_sources(self):
+        self.assertEqual(
+            [name for name, _ in COPYRIGHT_ENTRIES],
+            ['DGlab / DG-LAB', 'shocking_vrc', 'WenX1ang', '猫橘Citrus', 'ChatGPT'],
+        )
+
+    def test_polished_window_has_room_for_full_labels(self):
+        self.assertGreaterEqual(DesktopApplication.WIDTH, 1120)
+        self.assertGreaterEqual(DesktopApplication.HEIGHT, 760)
+
     def test_busy_save_does_not_write_partially_applied_settings(self):
         calls = []
 

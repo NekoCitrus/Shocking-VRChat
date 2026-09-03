@@ -44,6 +44,8 @@ gdi32.CreateFontW.restype = wintypes.HANDLE
 gdi32.CreateSolidBrush.restype = wintypes.HBRUSH
 user32.BeginPaint.restype = wintypes.HDC
 gdi32.DeleteObject.argtypes = [wintypes.HANDLE]
+gdi32.SetBkMode.argtypes = [wintypes.HDC, ctypes.c_int]
+gdi32.SetTextColor.argtypes = [wintypes.HDC, wintypes.DWORD]
 
 WM_CREATE = 0x0001
 WM_DESTROY = 0x0002
@@ -52,6 +54,8 @@ WM_CLOSE = 0x0010
 WM_COMMAND = 0x0111
 WM_TIMER = 0x0113
 WM_SETFONT = 0x0030
+WM_CTLCOLORBTN = 0x0135
+WM_CTLCOLORSTATIC = 0x0138
 WM_LBUTTONUP = 0x0202
 WM_LBUTTONDBLCLK = 0x0203
 WM_RBUTTONUP = 0x0205
@@ -93,6 +97,9 @@ NIF_MESSAGE = 0x00000001
 NIF_ICON = 0x00000002
 NIF_TIP = 0x00000004
 COLOR_WINDOW = 5
+TRANSPARENT = 1
+COLOR_WHITE = 0x00FFFFFF
+COLOR_TEXT = 0x00202020
 IDC_ARROW = 32512
 IDI_APPLICATION = 32512
 CW_USEDEFAULT = -2147483648
@@ -100,6 +107,7 @@ CW_USEDEFAULT = -2147483648
 ID_NAV_GENERAL = 101
 ID_NAV_PARAMS = 102
 ID_NAV_DEBUG = 103
+ID_NAV_ABOUT = 104
 ID_START = 110
 ID_STOP = 111
 ID_SAVE_RESTART = 112
@@ -108,6 +116,14 @@ ID_TRAY_SHOW = 201
 ID_TRAY_START = 202
 ID_TRAY_STOP = 203
 ID_TRAY_EXIT = 204
+
+COPYRIGHT_ENTRIES = (
+    ('DGlab / DG-LAB', '设备、开放协议与技术生态'),
+    ('shocking_vrc', '原始项目与创意来源'),
+    ('WenX1ang', '项目开发与贡献'),
+    ('猫橘Citrus', '桌面版整合、维护与开发'),
+    ('ChatGPT', '代码协作与辅助开发'),
+)
 
 
 class WNDCLASSEXW(ctypes.Structure):
@@ -209,8 +225,8 @@ def _window_proc(hwnd, message, wparam, lparam):
 
 
 class DesktopApplication:
-    WIDTH = 1000
-    HEIGHT = 680
+    WIDTH = 1120
+    HEIGHT = 760
 
     def __init__(self, config_manager, settings, basic_settings, controller):
         self.config_manager = config_manager
@@ -219,8 +235,9 @@ class DesktopApplication:
         self.controller = controller
         self.hwnd = None
         self.font = None
+        self.background_brush = gdi32.CreateSolidBrush(COLOR_WHITE)
         self.controls = {}
-        self.panels = {'general': [], 'params': [], 'debug': []}
+        self.panels = {'general': [], 'params': [], 'debug': [], 'about': []}
         self.events = queue.Queue()
         self.action_running = False
         self.exiting = False
@@ -271,7 +288,7 @@ class DesktopApplication:
         return handle
 
     def _check(self, key, text, checked, x, y, width, panel=None):
-        handle = self._create('BUTTON', text, WS_TABSTOP | BS_AUTOCHECKBOX, x, y, width, 25, panel=panel)
+        handle = self._create('BUTTON', text, WS_TABSTOP | BS_AUTOCHECKBOX, x, y, width, 28, panel=panel)
         user32.SendMessageW(handle, BM_SETCHECK, BST_CHECKED if checked else 0, 0)
         self.controls[key] = handle
         return handle
@@ -281,116 +298,138 @@ class DesktopApplication:
 
     def _build_controls(self):
         self.font = gdi32.CreateFontW(
-            -16, 0, 0, 0, 400, False, False, False, 1, 0, 0, 5, 0, 'Segoe UI'
+            -17, 0, 0, 0, 400, False, False, False, 1, 0, 0, 5, 0, 'Segoe UI'
         )
-        self._label('服务状态：', 20, 20, 75)
-        self.controls['service_status'] = self._label('正在启动…', 95, 20, 210)
-        self._button('启动服务', ID_START, 320, 14, 95, 32)
-        self._button('停止服务', ID_STOP, 425, 14, 95, 32)
-        self._button('保存并重启服务', ID_SAVE_RESTART, 530, 14, 130, 32)
+        self._label('服务状态', 20, 22, 100, 28)
+        self.controls['service_status'] = self._label('正在启动…', 125, 22, 180, 28)
+        self._button('启动服务', ID_START, 330, 14, 100, 36)
+        self._button('停止服务', ID_STOP, 442, 14, 100, 36)
+        self._button('保存并重启服务', ID_SAVE_RESTART, 554, 14, 150, 36)
 
-        self._button('基本设置', ID_NAV_GENERAL, 20, 75, 100, 38)
-        self._button('A/B 参数', ID_NAV_PARAMS, 20, 123, 100, 38)
-        self._button('运行调试', ID_NAV_DEBUG, 20, 171, 100, 38)
+        self._button('基本设置', ID_NAV_GENERAL, 20, 78, 110, 40)
+        self._button('A/B 参数', ID_NAV_PARAMS, 20, 130, 110, 40)
+        self._button('运行调试', ID_NAV_DEBUG, 20, 182, 110, 40)
+        self._button('版权信息', ID_NAV_ABOUT, 20, 234, 110, 40)
 
         self._build_general_panel()
         self._build_parameter_panel()
         self._build_debug_panel()
+        self._build_about_panel()
 
-        self._label('手机连接二维码', 700, 72, 240, 28)
-        self.controls['device_status'] = self._label('郊狼：未连接', 700, 355, 260, 25)
-        self._label('连接地址', 700, 393, 260, 22)
-        self._edit('qr_content', '', 700, 418, 260, 90, multiline=True, readonly=True)
-        self._label('配置文件', 700, 526, 260, 22)
-        self._edit('config_path', str(self.config_manager.path), 700, 550, 260, 50, multiline=True, readonly=True)
-        self._label('关闭窗口时可按设置隐藏到系统托盘。', 700, 615, 270, 25)
+        self._label('手机连接二维码', 770, 76, 310, 28)
+        self.controls['device_status'] = self._label('APP：未连接', 770, 405, 310, 30)
+        self._label('连接地址', 770, 447, 310, 26)
+        self._edit('qr_content', '', 770, 475, 310, 72, multiline=True, readonly=True)
+        self._label('配置文件', 770, 566, 310, 26)
+        self._edit('config_path', str(self.config_manager.path), 770, 594, 310, 105, multiline=True, readonly=True)
 
         self._show_panel('general')
         self._refresh_qr()
 
     def _build_general_panel(self):
         panel = 'general'
-        self._create('BUTTON', '网络监听', BS_GROUPBOX, 140, 70, 520, 100, panel=panel)
-        self._label('OSC / 分流入口', 160, 102, 125, panel=panel)
+        self._create('BUTTON', '网络监听', BS_GROUPBOX, 150, 72, 575, 105, panel=panel)
+        self._label('OSC / 分流入口', 172, 108, 150, 28, panel=panel)
         relay = self.settings['relay']
         endpoint = (
             format_endpoint(relay['listen_host'], relay['listen_port'])
             if relay['enabled']
             else format_endpoint(self.settings['osc']['listen_host'], self.settings['osc']['listen_port'])
         )
-        self._edit('listen_endpoint', endpoint, 300, 98, 330, panel=panel)
+        self._edit('listen_endpoint', endpoint, 335, 104, 360, 28, panel=panel)
 
-        self._create('BUTTON', '安全与显示', BS_GROUPBOX, 140, 180, 520, 145, panel=panel)
-        self._label('A 通道最大强度（0~200）', 160, 212, 200, panel=panel)
-        self._edit('strength_a', self.basic_settings['dglab3']['channel_a']['strength_limit'], 370, 208, 75, panel=panel)
-        self._label('B 通道最大强度（0~200）', 160, 247, 200, panel=panel)
-        self._edit('strength_b', self.basic_settings['dglab3']['channel_b']['strength_limit'], 370, 243, 75, panel=panel)
-        self._check('chatbox', '启用 VRChat Chatbox 状态消息', self.settings['chatbox']['enable'], 160, 280, 270, panel=panel)
+        self._create('BUTTON', '安全与显示', BS_GROUPBOX, 150, 190, 575, 170, panel=panel)
+        self._label('A 通道最大强度（0~200）', 172, 226, 225, 28, panel=panel)
+        self._edit('strength_a', self.basic_settings['dglab3']['channel_a']['strength_limit'], 410, 222, 90, 28, panel=panel)
+        self._label('B 通道最大强度（0~200）', 172, 265, 225, 28, panel=panel)
+        self._edit('strength_b', self.basic_settings['dglab3']['channel_b']['strength_limit'], 410, 261, 90, 28, panel=panel)
+        self._check('chatbox', '启用 VRChat Chatbox 状态消息', self.settings['chatbox']['enable'], 172, 300, 360, panel=panel)
         self._check(
             'background',
             '关闭主窗口后继续在系统托盘运行',
             self.settings['general']['run_in_background'],
-            160,
-            305,
-            300,
+            172,
+            328,
+            400,
             panel=panel,
         )
 
-        self._create('BUTTON', 'UDP 端口分流', BS_GROUPBOX, 140, 338, 520, 170, panel=panel)
-        self._check('relay', '启用端口分流', relay['enabled'], 160, 370, 180, panel=panel)
-        self._label('VRCFT 目标', 160, 410, 125, panel=panel)
-        self._edit('vrcft_endpoint', format_endpoint(relay['vrcft_host'], relay['vrcft_port']), 300, 406, 330, panel=panel)
-        self._label('本程序内部目标', 160, 449, 125, panel=panel)
-        self._edit('internal_endpoint', format_endpoint(relay['internal_host'], relay['internal_port']), 300, 445, 330, panel=panel)
-        self._label('启用后，每个 UDP 数据包会原样发送到以上两个目标。', 160, 480, 450, panel=panel)
+        self._create('BUTTON', 'UDP 端口分流', BS_GROUPBOX, 150, 374, 575, 200, panel=panel)
+        self._check('relay', '启用端口分流', relay['enabled'], 172, 410, 220, panel=panel)
+        self._label('VRCFT 目标', 172, 451, 150, 28, panel=panel)
+        self._edit('vrcft_endpoint', format_endpoint(relay['vrcft_host'], relay['vrcft_port']), 335, 447, 360, 28, panel=panel)
+        self._label('本程序内部目标', 172, 492, 150, 28, panel=panel)
+        self._edit('internal_endpoint', format_endpoint(relay['internal_host'], relay['internal_port']), 335, 488, 360, 28, panel=panel)
+        self._label('启用后，每个 UDP 数据包会原样发送到以上两个目标。', 172, 532, 520, 30, panel=panel)
 
     def _build_parameter_panel(self):
         panel = 'params'
-        self._label('每行一个 /avatar/parameters/... 参数；支持通配符 * 和直接批量粘贴。', 140, 72, 520, 28, panel=panel)
-        self._label('A 通道监听参数', 140, 108, 245, 25, panel=panel)
-        self._label('B 通道监听参数', 405, 108, 245, 25, panel=panel)
+        self._label('每行一个 /avatar/parameters/... 参数；支持通配符 * 和直接批量粘贴。', 150, 76, 575, 30, panel=panel)
+        self._label('A 通道监听参数', 150, 116, 270, 28, panel=panel)
+        self._label('B 通道监听参数', 440, 116, 270, 28, panel=panel)
         self._edit(
             'params_a',
             '\r\n'.join(self.basic_settings['dglab3']['channel_a']['avatar_params']),
-            140,
-            136,
-            245,
-            405,
+            150,
+            148,
+            270,
+            450,
             multiline=True,
             panel=panel,
         )
         self._edit(
             'params_b',
             '\r\n'.join(self.basic_settings['dglab3']['channel_b']['avatar_params']),
-            405,
-            136,
-            245,
-            405,
+            440,
+            148,
+            270,
+            450,
             multiline=True,
             panel=panel,
         )
-        self._label('修改后点击顶部“保存并重启服务”才会生效。', 140, 555, 500, 25, panel=panel)
+        self._label('修改后点击顶部“保存并重启服务”才会生效。', 150, 612, 560, 30, panel=panel)
 
     def _build_debug_panel(self):
         panel = 'debug'
-        self._label('单台郊狼设备实时状态（只读）', 140, 72, 500, 28, panel=panel)
-        self._build_channel_debug('A', 140, 110, panel)
-        self._build_channel_debug('B', 140, 315, panel)
-        self.controls['relay_debug'] = self._label('UDP 分流包数：0', 155, 540, 480, 25, panel=panel)
+        self._label('单台郊狼设备实时状态（只读）', 150, 76, 575, 30, panel=panel)
+        self._build_channel_debug('A', 150, 116, panel)
+        self._build_channel_debug('B', 150, 336, panel)
+        self.controls['relay_debug'] = self._label('UDP 分流包数：0', 168, 570, 535, 30, panel=panel)
 
     def _build_channel_debug(self, channel, x, y, panel):
-        self._create('BUTTON', f'{channel} 通道', BS_GROUPBOX, x, y, 520, 185, panel=panel)
-        self._label('正在触发的参数', x + 15, y + 32, 125, panel=panel)
-        self.controls[f'debug_param_{channel}'] = self._label('—', x + 145, y + 32, 355, 25, panel=panel)
-        self._label('原始值', x + 15, y + 67, 125, panel=panel)
-        self.controls[f'debug_raw_{channel}'] = self._label('0.000', x + 145, y + 67, 120, 25, panel=panel)
-        self._label('映射强度', x + 15, y + 102, 125, panel=panel)
-        self.controls[f'debug_mapped_{channel}'] = self._label('0.0%', x + 145, y + 102, 120, 25, panel=panel)
-        self._label('实际发送强度', x + 275, y + 102, 120, panel=panel)
-        self.controls[f'debug_actual_{channel}'] = self._label('0 / 0', x + 400, y + 102, 95, 25, panel=panel)
-        progress = self._create('msctls_progress32', '', 0, x + 15, y + 140, 485, 22, panel=panel)
+        self._create('BUTTON', f'{channel} 通道', BS_GROUPBOX, x, y, 575, 200, panel=panel)
+        self._label('正在触发的参数', x + 18, y + 37, 140, 28, panel=panel)
+        self.controls[f'debug_param_{channel}'] = self._label('—', x + 165, y + 37, 385, 28, panel=panel)
+        self._label('原始值', x + 18, y + 78, 140, 28, panel=panel)
+        self.controls[f'debug_raw_{channel}'] = self._label('0.000', x + 165, y + 78, 130, 28, panel=panel)
+        self._label('映射强度', x + 18, y + 119, 140, 28, panel=panel)
+        self.controls[f'debug_mapped_{channel}'] = self._label('0.0%', x + 165, y + 119, 130, 28, panel=panel)
+        self._label('实际发送强度', x + 310, y + 119, 130, 28, panel=panel)
+        self.controls[f'debug_actual_{channel}'] = self._label('0 / 0', x + 448, y + 119, 105, 28, panel=panel)
+        progress = self._create('msctls_progress32', '', 0, x + 18, y + 158, 535, 24, panel=panel)
         user32.SendMessageW(progress, PBM_SETRANGE32, 0, 1000)
         self.controls[f'debug_progress_{channel}'] = progress
+
+    def _build_about_panel(self):
+        panel = 'about'
+        self._label('版权与来源', 150, 78, 575, 36, panel=panel)
+        self._label(
+            'ShockingVRChat 基于开源协作持续开发，感谢以下项目与贡献者：',
+            150,
+            126,
+            575,
+            30,
+            panel=panel,
+        )
+        y = 178
+        for name, contribution in COPYRIGHT_ENTRIES:
+            self._label(name, 172, y, 145, 30, panel=panel)
+            self._label(contribution, 330, y, 385, 30, panel=panel)
+            y += 44
+        self._create('BUTTON', '开源许可', BS_GROUPBOX, 150, 420, 575, 126, panel=panel)
+        self._label('本程序依照 GNU Affero General Public License v3.0 发布。', 172, 458, 530, 30, panel=panel)
+        self._label('DG-LAB、VRChat、SteamVR 等名称及商标归各自权利人所有。', 172, 493, 530, 30, panel=panel)
+        self._label('感谢每一位测试者、使用者与开源社区贡献者。', 150, 575, 575, 30, panel=panel)
 
     def _show_panel(self, selected):
         for name, handles in self.panels.items():
@@ -563,7 +602,7 @@ class DesktopApplication:
         try:
             if not self.qr_matrix:
                 return
-            left, top, size = 700, 105, 260
+            left, top, size = 785, 112, 280
             white = gdi32.CreateSolidBrush(0x00FFFFFF)
             black = gdi32.CreateSolidBrush(0x00000000)
             rect = wintypes.RECT(left, top, left + size, top + size)
@@ -654,6 +693,8 @@ class DesktopApplication:
                 self._show_panel('params')
             elif command == ID_NAV_DEBUG:
                 self._show_panel('debug')
+            elif command == ID_NAV_ABOUT:
+                self._show_panel('about')
             elif command in (ID_START, ID_TRAY_START):
                 self._start_action('start')
             elif command in (ID_STOP, ID_TRAY_STOP):
@@ -675,6 +716,11 @@ class DesktopApplication:
         if message == WM_PAINT:
             self._paint_qr()
             return 0
+        if message in (WM_CTLCOLORSTATIC, WM_CTLCOLORBTN):
+            hdc = wintypes.HDC(wparam)
+            gdi32.SetBkMode(hdc, TRANSPARENT)
+            gdi32.SetTextColor(hdc, COLOR_TEXT)
+            return self.background_brush
         if message == WM_TRAY:
             mouse_message = int(lparam) & 0xFFFF
             if mouse_message in (WM_LBUTTONUP, WM_LBUTTONDBLCLK):
@@ -693,6 +739,10 @@ class DesktopApplication:
             self._remove_tray_icon()
             if self.font:
                 gdi32.DeleteObject(self.font)
+                self.font = None
+            if self.background_brush:
+                gdi32.DeleteObject(self.background_brush)
+                self.background_brush = None
             user32.PostQuitMessage(0)
             return 0
         return user32.DefWindowProcW(hwnd, message, wparam, lparam)
@@ -714,7 +764,7 @@ class DesktopApplication:
             instance,
             icon,
             user32.LoadCursorW(None, IDC_ARROW),
-            COLOR_WINDOW + 1,
+            self.background_brush,
             None,
             class_name,
             icon,

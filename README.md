@@ -23,9 +23,16 @@
 - **基本设置**：编辑 `127.0.0.1:9001` 形式的监听地址、A/B 强度上限、Chatbox 与后台运行开关。
 - **A/B 参数**：每行一个 Avatar 参数，支持通配符 `*`、批量粘贴和自动去重。
 - **运行调试**：显示单台郊狼的连接状态、当前触发参数、OSC 原始值、映射百分比与实际发送强度。状态栏会区分“APP 未连接”“APP 已连接但等待蓝牙设备”和“郊狼已连接”。
+- **版权信息**：显示项目来源、主要贡献者、辅助开发来源与开源许可。
 - **UDP 分流**：启用后把入口数据包原样转发到 VRCFT（默认 `127.0.0.1:9011`）和本程序内部监听（默认 `127.0.0.1:9021`）。
 
 程序仅接受一台郊狼设备连接，第二台设备会被拒绝。
+
+### 跟随 SteamVR 启动功能规划
+
+计划在“基本设置”加入“跟随 SteamVR 启动”复选框。启用时，程序将在 `%APPDATA%\ShockingVRChat\steamvr\` 生成应用清单，通过 OpenVR 的 `IVRApplications` 注册清单并开启自动启动；关闭时取消自动启动并注销清单。实现时还会处理 SteamVR 未安装、SteamVR 尚未运行、首次注册可能需要重启 SteamVR、exe 被移动后清单路径更新等情况，并且只有在 SteamVR 确认注册成功后才保存勾选状态。
+
+该功能不会使用 Windows 开机启动项，也不会在 SteamVR 未运行时常驻一个轮询进程。正式实现前将补充清单生成、注册/注销、路径迁移和错误恢复测试。
 
 ## 配置文件
 
@@ -284,6 +291,8 @@ PyInstaller 生成无控制台的单文件 `dist\shocking_vrchat.exe`，配置�
 ## Credits
 
 感谢 [dungeonlab-open/dglab-websocket-server](https://github.com/dungeonlab-open/dglab-websocket-server) 与 [dglab-kit](https://github.com/dungeonlab-open/dglab-kit) 提供的官方 V3/V4 协议实现。
+
+项目来源与贡献：DGlab / DG-LAB、shocking_vrc、WenX1ang、猫橘Citrus、ChatGPT。
 
 感谢以下用户对常见参数部分的协助：ichiAkagi
 
