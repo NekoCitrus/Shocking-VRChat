@@ -79,6 +79,7 @@ DEFAULT_SETTINGS = {
     'version': CONFIG_FILE_VERSION,
     'general': {
         'run_in_background': True,
+        'steamvr_auto_start': False,
         'local_ip_detect': {'host': '223.5.5.5', 'port': 80},
     },
     'chatbox': {
@@ -133,6 +134,11 @@ def _validate_host(section, name):
 
 
 def validate_config(settings, basic_settings):
+    general = settings['general']
+    for option in ('run_in_background', 'steamvr_auto_start'):
+        if not isinstance(general.get(option), bool):
+            raise ValueError(f'general.{option} 必须是布尔值。')
+
     for section_name in ('osc', 'web_server', 'ws'):
         section = settings[section_name]
         _validate_host(section, 'listen_host')

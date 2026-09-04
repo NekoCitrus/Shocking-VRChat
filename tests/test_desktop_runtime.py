@@ -2,9 +2,11 @@ import asyncio
 import copy
 import json
 import socket
+import sys
 import tempfile
 import threading
 import time
+from types import SimpleNamespace
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -25,7 +27,13 @@ from srv.config_manager import (
     validate_config,
 )
 from srv.udp_relay import create_udp_relay
-from srv.win32_ui import COPYRIGHT_ENTRIES, DesktopApplication
+from srv.steamvr_autostart import (
+    APPLICATION_KEY,
+    OpenVRApplicationsBackend,
+    configure_steamvr_autostart,
+    write_manifest,
+)
+from srv.win32_ui import COPYRIGHT_ENTRIES, FRONTEND_CONTRIBUTORS, DesktopApplication
 
 
 def free_udp_port():
@@ -48,6 +56,7 @@ class ConfigManagerTests(unittest.TestCase):
             self.assertTrue(manager.path.exists())
             self.assertIsNotNone(settings['ws']['master_uuid'])
             self.assertEqual(basic['dglab3']['channel_a']['strength_limit'], 100)
+            self.assertFalse(settings['general']['steamvr_auto_start'])
 
     def test_v02_files_are_migrated_without_removal(self):
         with tempfile.TemporaryDirectory() as root:
@@ -86,6 +95,12 @@ class ConfigManagerTests(unittest.TestCase):
             parse_parameter_lines(value),
             ['/avatar/parameters/test', '/avatar/parameters/other/*'],
         )
+
+    def test_steamvr_auto_start_requires_a_boolean(self):
+        settings = copy.deepcopy(DEFAULT_SETTINGS)
+        settings['general']['steamvr_auto_start'] = 'true'
+        with self.assertRaisesRegex(ValueError, 'general.steamvr_auto_start'):
+            validate_config(settings, copy.deepcopy(DEFAULT_BASIC_SETTINGS))
 
     def test_endpoint_parser_supports_ipv4_and_ipv6(self):
         self.assertEqual(parse_endpoint('127.0.0.1:9001'), ('127.0.0.1', 9001))
@@ -453,9 +468,14 @@ class WebSocketPairingTests(unittest.IsolatedAsyncioTestCase):
 class DesktopApplicationTests(unittest.TestCase):
     def test_copyright_page_lists_all_requested_sources(self):
         self.assertEqual(
-            [name for name, _ in COPYRIGHT_ENTRIES],
-            ['DGlab / DG-LAB', 'shocking_vrc', 'WenX1ang', '猫橘Citrus', 'ChatGPT'],
+            COPYRIGHT_ENTRIES,
+            (
+                ('DG-LAB', 'https://github.com/dungeonlab-open', '设备、开放协议与技术生态'),
+                ('Shocking-VRChat', 'https://github.com/VRChatNext/Shocking-VRChat', '原始项目与代码来源'),
+                ('DG-LAB-VRCOSC', 'https://github.com/ccvrc/DG-LAB-VRCOSC', 'Chatbox 发送部分来源'),
+            ),
         )
+        self.assertEqual(FRONTEND_CONTRIBUTORS, ('WenX1ang', '猫橘Citrus', 'ChatGPT'))
 
     def test_polished_window_has_room_for_full_labels(self):
         self.assertGreaterEqual(DesktopApplication.WIDTH, 1120)
@@ -475,6 +495,122 @@ class DesktopApplicationTests(unittest.TestCase):
 
         DesktopApplication._save_and_restart(BusyApplication())
         self.assertEqual(calls, [('当前操作尚未完成，请稍候再试。', True)])
+
+
+class SteamVRAutoStartTests(unittest.TestCase):
+    class Backend:
+        def __init__(self, installed=True, auto_launch=False, install_on_add=True):
+            self.installed = installed
+            self.auto_launch = auto_launch
+            self.install_on_add = install_on_add
+            self.added = []
+            self.removed = []
+            self.set_values = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def is_installed(self):
+            return self.installed
+
+        def add_manifest(self, path):
+            self.added.append(Path(path))
+            if self.install_on_add:
+                self.installed = True
+
+        def remove_manifest(self, path):
+            self.removed.append(Path(path))
+            self.installed = False
+
+        def set_auto_launch(self, enabled):
+            self.set_values.append(enabled)
+            self.auto_launch = enabled
+
+        def get_auto_launch(self):
+            return self.auto_launch
+
+    def test_manifest_uses_absolute_binary_and_required_overlay_flag(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            executable = Path(temp_dir) / 'ShockingVRChat.exe'
+            manifest_path = write_manifest(temp_dir, executable, '')
+            document = json.loads(manifest_path.read_text(encoding='utf-8'))
+            application = document['applications'][0]
+            self.assertEqual(application['app_key'], APPLICATION_KEY)
+            self.assertEqual(application['binary_path_windows'], str(executable.resolve()))
+            self.assertTrue(application['is_dashboard_overlay'])
+
+    def test_openvr_utility_mode_handles_running_runtime_without_a_headset(self):
+        calls = []
+        applications = object()
+
+        class HmdNotFound(Exception):
+            pass
+
+        def init(application_type):
+            calls.append(application_type)
+            if application_type == 3:
+                raise HmdNotFound
+
+        fake_openvr = SimpleNamespace(
+            VRApplication_Background=3,
+            VRApplication_Utility=4,
+            error_code=SimpleNamespace(InitError_Init_HmdNotFound=HmdNotFound),
+            init=init,
+            shutdown=lambda: calls.append('shutdown'),
+            VRApplications=lambda: applications,
+        )
+        with patch.dict(sys.modules, {'openvr': fake_openvr}):
+            with OpenVRApplicationsBackend() as backend:
+                self.assertIs(backend.applications, applications)
+        self.assertEqual(calls, [3, 'shutdown', 4, 'shutdown'])
+
+    def test_enable_registers_manifest_and_verifies_auto_launch(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            backend = self.Backend(installed=False)
+            result = configure_steamvr_autostart(
+                temp_dir,
+                True,
+                executable=Path(temp_dir) / 'ShockingVRChat.exe',
+                backend_factory=lambda: backend,
+            )
+            self.assertTrue(result.enabled)
+            self.assertFalse(result.pending_restart)
+            self.assertEqual(len(backend.added), 1)
+            self.assertEqual(backend.set_values, [True])
+            self.assertTrue(backend.auto_launch)
+
+    def test_first_registration_can_report_required_steamvr_restart(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            backend = self.Backend(installed=False, install_on_add=False)
+            result = configure_steamvr_autostart(
+                temp_dir,
+                True,
+                executable=Path(temp_dir) / 'ShockingVRChat.exe',
+                backend_factory=lambda: backend,
+            )
+            self.assertTrue(result.pending_restart)
+            self.assertEqual(backend.set_values, [])
+
+    def test_disable_verifies_setting_and_removes_manifest(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manifest_path = write_manifest(
+                temp_dir,
+                Path(temp_dir) / 'ShockingVRChat.exe',
+                '',
+            )
+            backend = self.Backend(installed=True, auto_launch=True)
+            result = configure_steamvr_autostart(
+                temp_dir,
+                False,
+                backend_factory=lambda: backend,
+            )
+            self.assertFalse(result.enabled)
+            self.assertEqual(backend.set_values, [False])
+            self.assertEqual(backend.removed, [manifest_path])
+            self.assertFalse(manifest_path.exists())
 
 
 if __name__ == '__main__':

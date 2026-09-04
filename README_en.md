@@ -20,19 +20,19 @@ Our VRChat Group: [ShockingVRC https://vrc.group/SHOCK.2911](https://vrc.group/S
 
 ## Desktop UI
 
-- **General:** listener endpoint, A/B limits, Chatbox, background operation, and UDP relay.
+- **General:** listener endpoint, A/B limits, Chatbox, background operation, SteamVR auto-start, and UDP relay.
 - **A/B Parameters:** simple per-line editing, wildcard `*` support, bulk paste, and automatic deduplication.
 - **Runtime Debug:** live parameter, raw OSC value, mapped percentage, and actual output for one Coyote device. The status distinguishes an unconnected app, an attached app waiting for Bluetooth, and a ready Coyote device.
-- **Copyright:** project sources, principal contributors, development assistance, and the open-source license.
+- **Copyright:** project and code sources, frontend contributors, and the open-source license.
 - **UDP Relay:** forwards every incoming datagram unchanged to VRCFT (default `127.0.0.1:9011`) and this app (default `127.0.0.1:9021`).
 
 Only one Coyote device is accepted. Additional device connections are rejected.
 
-### Planned SteamVR auto-start
+### Start with SteamVR
 
-A **Start with SteamVR** checkbox is planned for General settings. Enabling it will generate an application manifest under `%APPDATA%\ShockingVRChat\steamvr\`, register that manifest through OpenVR `IVRApplications`, and enable automatic launch. Disabling it will turn off automatic launch and unregister the manifest. The implementation will handle SteamVR not being installed or running, a possible SteamVR restart after first registration, and manifest repair after moving the exe. The checkbox will only be persisted after SteamVR confirms registration.
+The **Start with SteamVR** checkbox uses an OpenVR application manifest to enable or disable SteamVR auto-start. Start SteamVR before changing this option and selecting **Save and restart service**. The manifest is stored under `%APPDATA%\ShockingVRChat\steamvr\`; each application start verifies it and repairs the path after the exe is moved.
 
-This feature will not use Windows login startup or keep a polling helper resident before SteamVR starts. Manifest generation, registration, removal, path migration, and failure recovery will be covered by tests before release.
+This feature does not use Windows login startup and does not launch or poll for SteamVR. SteamVR may require one restart when it first reads the new manifest; the UI reports this and completes setup on the next launch.
 
 ## Configuration location
 
@@ -166,6 +166,7 @@ dglab3:
         top: 0.8
 general: # General configuration
   run_in_background: true
+  steamvr_auto_start: false # Prefer changing this in the desktop UI
   local_ip_detect:  # Server address for detecting local IP
     host: 223.5.5.5 # Default is AliDNS. If used outside mainland China, modify accordingly
     port: 80
@@ -265,9 +266,11 @@ PyInstaller produces the console-free single file `dist\shocking_vrchat.exe`. Co
 
 ## Credits
 
-Thanks to the official [dungeonlab-open/dglab-websocket-server](https://github.com/dungeonlab-open/dglab-websocket-server) and [dglab-kit](https://github.com/dungeonlab-open/dglab-kit) V3/V4 implementations.
+Thanks to [DG-LAB](https://github.com/dungeonlab-open) for the devices, open protocols, and technical ecosystem.
 
-Project sources and contributors: DGlab / DG-LAB, shocking_vrc, WenX1ang, 猫橘Citrus, and ChatGPT.
+The original project and code come from [Shocking-VRChat](https://github.com/VRChatNext/Shocking-VRChat). The Chatbox sending implementation comes from [DG-LAB-VRCOSC](https://github.com/ccvrc/DG-LAB-VRCOSC).
+
+The frontend UI was contributed by WenX1ang, 猫橘Citrus, and ChatGPT.
 
 -----
 

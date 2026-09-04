@@ -16,6 +16,7 @@ import qrcode
 from loguru import logger
 
 from srv.config_manager import format_endpoint, parse_endpoint, parse_parameter_lines, validate_config
+from srv.steamvr_autostart import SteamVRAutoStartError, configure_steamvr_autostart
 
 
 if sys.platform != 'win32':
@@ -118,12 +119,11 @@ ID_TRAY_STOP = 203
 ID_TRAY_EXIT = 204
 
 COPYRIGHT_ENTRIES = (
-    ('DGlab / DG-LAB', '设备、开放协议与技术生态'),
-    ('shocking_vrc', '原始项目与创意来源'),
-    ('WenX1ang', '项目开发与贡献'),
-    ('猫橘Citrus', '桌面版整合、维护与开发'),
-    ('ChatGPT', '代码协作与辅助开发'),
+    ('DG-LAB', 'https://github.com/dungeonlab-open', '设备、开放协议与技术生态'),
+    ('Shocking-VRChat', 'https://github.com/VRChatNext/Shocking-VRChat', '原始项目与代码来源'),
+    ('DG-LAB-VRCOSC', 'https://github.com/ccvrc/DG-LAB-VRCOSC', 'Chatbox 发送部分来源'),
 )
+FRONTEND_CONTRIBUTORS = ('WenX1ang', '猫橘Citrus', 'ChatGPT')
 
 
 class WNDCLASSEXW(ctypes.Structure):
@@ -239,6 +239,7 @@ class DesktopApplication:
         self.controls = {}
         self.panels = {'general': [], 'params': [], 'debug': [], 'about': []}
         self.events = queue.Queue()
+        self.steamvr_lock = threading.Lock()
         self.action_running = False
         self.exiting = False
         self.pending_exit = False
@@ -338,7 +339,7 @@ class DesktopApplication:
         )
         self._edit('listen_endpoint', endpoint, 335, 104, 360, 28, panel=panel)
 
-        self._create('BUTTON', '安全与显示', BS_GROUPBOX, 150, 190, 575, 170, panel=panel)
+        self._create('BUTTON', '安全与启动', BS_GROUPBOX, 150, 190, 575, 218, panel=panel)
         self._label('A 通道最大强度（0~200）', 172, 226, 225, 28, panel=panel)
         self._edit('strength_a', self.basic_settings['dglab3']['channel_a']['strength_limit'], 410, 222, 90, 28, panel=panel)
         self._label('B 通道最大强度（0~200）', 172, 265, 225, 28, panel=panel)
@@ -353,14 +354,29 @@ class DesktopApplication:
             400,
             panel=panel,
         )
+        self._check(
+            'steamvr_auto_start',
+            '跟随 SteamVR 启动',
+            self.settings['general']['steamvr_auto_start'],
+            172,
+            356,
+            300,
+            panel=panel,
+        )
+        steamvr_status = (
+            'SteamVR：已配置，启动时将自动校验'
+            if self.settings['general']['steamvr_auto_start']
+            else 'SteamVR：未启用'
+        )
+        self.controls['steamvr_status'] = self._label(steamvr_status, 195, 384, 500, 26, panel=panel)
 
-        self._create('BUTTON', 'UDP 端口分流', BS_GROUPBOX, 150, 374, 575, 200, panel=panel)
-        self._check('relay', '启用端口分流', relay['enabled'], 172, 410, 220, panel=panel)
-        self._label('VRCFT 目标', 172, 451, 150, 28, panel=panel)
-        self._edit('vrcft_endpoint', format_endpoint(relay['vrcft_host'], relay['vrcft_port']), 335, 447, 360, 28, panel=panel)
-        self._label('本程序内部目标', 172, 492, 150, 28, panel=panel)
-        self._edit('internal_endpoint', format_endpoint(relay['internal_host'], relay['internal_port']), 335, 488, 360, 28, panel=panel)
-        self._label('启用后，每个 UDP 数据包会原样发送到以上两个目标。', 172, 532, 520, 30, panel=panel)
+        self._create('BUTTON', 'UDP 端口分流', BS_GROUPBOX, 150, 422, 575, 200, panel=panel)
+        self._check('relay', '启用端口分流', relay['enabled'], 172, 458, 220, panel=panel)
+        self._label('VRCFT 目标', 172, 499, 150, 28, panel=panel)
+        self._edit('vrcft_endpoint', format_endpoint(relay['vrcft_host'], relay['vrcft_port']), 335, 495, 360, 28, panel=panel)
+        self._label('本程序内部目标', 172, 540, 150, 28, panel=panel)
+        self._edit('internal_endpoint', format_endpoint(relay['internal_host'], relay['internal_port']), 335, 536, 360, 28, panel=panel)
+        self._label('启用后，每个 UDP 数据包会原样发送到以上两个目标。', 172, 580, 520, 30, panel=panel)
 
     def _build_parameter_panel(self):
         panel = 'params'
@@ -413,23 +429,22 @@ class DesktopApplication:
     def _build_about_panel(self):
         panel = 'about'
         self._label('版权与来源', 150, 78, 575, 36, panel=panel)
-        self._label(
-            'ShockingVRChat 基于开源协作持续开发，感谢以下项目与贡献者：',
-            150,
-            126,
-            575,
-            30,
-            panel=panel,
-        )
-        y = 178
-        for name, contribution in COPYRIGHT_ENTRIES:
-            self._label(name, 172, y, 145, 30, panel=panel)
-            self._label(contribution, 330, y, 385, 30, panel=panel)
-            y += 44
-        self._create('BUTTON', '开源许可', BS_GROUPBOX, 150, 420, 575, 126, panel=panel)
-        self._label('本程序依照 GNU Affero General Public License v3.0 发布。', 172, 458, 530, 30, panel=panel)
-        self._label('DG-LAB、VRChat、SteamVR 等名称及商标归各自权利人所有。', 172, 493, 530, 30, panel=panel)
-        self._label('感谢每一位测试者、使用者与开源社区贡献者。', 150, 575, 575, 30, panel=panel)
+        self._create('BUTTON', '项目与代码来源', BS_GROUPBOX, 150, 120, 575, 225, panel=panel)
+        y = 154
+        for name, homepage, contribution in COPYRIGHT_ENTRIES:
+            self._label(name, 172, y, 155, 28, panel=panel)
+            self._label(contribution, 335, y, 370, 28, panel=panel)
+            self._label(homepage, 195, y + 27, 510, 26, panel=panel)
+            y += 62
+
+        self._create('BUTTON', '前端部分贡献', BS_GROUPBOX, 150, 360, 575, 122, panel=panel)
+        for index, contributor in enumerate(FRONTEND_CONTRIBUTORS):
+            self._label(contributor, 172 + index * 158, 399, 145, 28, panel=panel)
+        self._label('以上三者的贡献均为前端界面部分。', 172, 438, 520, 28, panel=panel)
+
+        self._create('BUTTON', '开源许可', BS_GROUPBOX, 150, 500, 575, 126, panel=panel)
+        self._label('本程序依照 GNU Affero General Public License v3.0 发布。', 172, 538, 530, 30, panel=panel)
+        self._label('DG-LAB、VRChat、SteamVR 等名称及商标归各自权利人所有。', 172, 573, 530, 30, panel=panel)
 
     def _show_panel(self, selected):
         for name, handles in self.panels.items():
@@ -451,6 +466,9 @@ class DesktopApplication:
     def _is_checked(self, key):
         return user32.SendMessageW(self.controls[key], BM_GETCHECK, 0, 0) == BST_CHECKED
 
+    def _set_checked(self, key, checked):
+        user32.SendMessageW(self.controls[key], BM_SETCHECK, BST_CHECKED if checked else 0, 0)
+
     def _read_form(self):
         settings = copy.deepcopy(self.settings)
         basic = copy.deepcopy(self.basic_settings)
@@ -469,12 +487,32 @@ class DesktopApplication:
         )
         settings['chatbox']['enable'] = self._is_checked('chatbox')
         settings['general']['run_in_background'] = self._is_checked('background')
+        settings['general']['steamvr_auto_start'] = self._is_checked('steamvr_auto_start')
         basic['dglab3']['channel_a']['strength_limit'] = int(self._get_text('strength_a'))
         basic['dglab3']['channel_b']['strength_limit'] = int(self._get_text('strength_b'))
         basic['dglab3']['channel_a']['avatar_params'] = parse_parameter_lines(self._get_text('params_a'))
         basic['dglab3']['channel_b']['avatar_params'] = parse_parameter_lines(self._get_text('params_b'))
         validate_config(settings, basic)
         return settings, basic
+
+    def _apply_steamvr_autostart(self, enabled):
+        with self.steamvr_lock:
+            return configure_steamvr_autostart(self.config_manager.config_dir, enabled)
+
+    def _sync_steamvr_on_start(self):
+        if not self.settings['general']['steamvr_auto_start']:
+            return
+        self._set_text('steamvr_status', 'SteamVR：正在校验自动启动…')
+
+        def worker():
+            try:
+                result = self._apply_steamvr_autostart(True)
+                self.post_event({'type': 'steamvr', 'result': result})
+            except SteamVRAutoStartError as exc:
+                logger.warning('SteamVR 自动启动同步失败：{}', exc)
+                self.post_event({'type': 'steamvr', 'error': str(exc)})
+
+        threading.Thread(target=worker, daemon=True, name='ui-steamvr-sync').start()
 
     def _start_action(self, action, settings=None, basic=None):
         if self.action_running:
@@ -484,6 +522,7 @@ class DesktopApplication:
 
         def worker():
             error = None
+            steamvr_result = None
             try:
                 if action == 'start':
                     self.controller.start(self.settings, self.basic_settings)
@@ -491,12 +530,26 @@ class DesktopApplication:
                     self.controller.stop()
                 elif action == 'restart':
                     self.controller.restart(settings, basic)
+                elif action == 'save_restart':
+                    desired = settings['general']['steamvr_auto_start']
+                    previous = self.settings['general']['steamvr_auto_start']
+                    if desired or desired != previous:
+                        steamvr_result = self._apply_steamvr_autostart(desired)
+                    self.config_manager.save(settings, basic)
+                    self.controller.restart(settings, basic)
                 elif action == 'exit':
                     self.controller.stop()
             except Exception as exc:
                 logger.error(traceback.format_exc())
                 error = str(exc)
-            self.post_event({'type': 'action_done', 'action': action, 'error': error})
+            self.post_event({
+                'type': 'action_done',
+                'action': action,
+                'error': error,
+                'settings': settings,
+                'basic': basic,
+                'steamvr_result': steamvr_result,
+            })
 
         threading.Thread(target=worker, daemon=True, name=f'ui-{action}').start()
 
@@ -506,11 +559,11 @@ class DesktopApplication:
             return
         try:
             settings, basic = self._read_form()
-            self.config_manager.save(settings, basic)
-            self.settings = settings
-            self.basic_settings = basic
-            self._refresh_qr()
-            self._start_action('restart', settings, basic)
+            desired = settings['general']['steamvr_auto_start']
+            previous = self.settings['general']['steamvr_auto_start']
+            if desired or desired != previous:
+                self._set_text('steamvr_status', 'SteamVR：正在应用设置…')
+            self._start_action('save_restart', settings, basic)
         except (ValueError, OSError) as exc:
             self._message(str(exc), error=True)
 
@@ -533,12 +586,33 @@ class DesktopApplication:
             elif event_type == 'action_done':
                 self.action_running = False
                 if event.get('error'):
+                    if event.get('action') == 'save_restart':
+                        self._set_checked(
+                            'steamvr_auto_start',
+                            self.settings['general']['steamvr_auto_start'],
+                        )
+                        current = '已启用' if self.settings['general']['steamvr_auto_start'] else '未启用'
+                        self._set_text('steamvr_status', f'SteamVR：{current}（本次更改失败）')
                     self._message(f'操作失败：{event["error"]}', error=True)
+                elif event.get('action') == 'save_restart':
+                    self.settings = event['settings']
+                    self.basic_settings = event['basic']
+                    self._refresh_qr()
+                    result = event.get('steamvr_result')
+                    if result is not None:
+                        self._set_text('steamvr_status', f'SteamVR：{result.message}')
+                        if result.pending_restart:
+                            self._message(result.message)
                 if event.get('action') == 'exit':
                     user32.DestroyWindow(self.hwnd)
                 elif self.pending_exit:
                     self.pending_exit = False
                     self._start_action('exit')
+            elif event_type == 'steamvr':
+                if event.get('error'):
+                    self._set_text('steamvr_status', f'SteamVR：待同步（{event["error"]}）')
+                else:
+                    self._set_text('steamvr_status', f'SteamVR：{event["result"].message}')
             elif event_type == 'device':
                 if event.get('connected'):
                     device = '郊狼：已连接'
@@ -678,6 +752,7 @@ class DesktopApplication:
         if message == WM_CREATE:
             self.hwnd = hwnd
             self._build_controls()
+            self._sync_steamvr_on_start()
             self._add_tray_icon()
             user32.SetTimer(hwnd, 1, 250, None)
             user32.PostMessageW(hwnd, WM_AUTOSTART, 0, 0)

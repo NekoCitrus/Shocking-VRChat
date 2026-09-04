@@ -1,11 +1,16 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from PyInstaller.utils.hooks import collect_data_files
+
+
+openvr_data = collect_data_files('openvr', includes=['*.dll'])
+
 
 a = Analysis(
     ['shocking_vrchat.py'],
     pathex=[],
     binaries=[],
-    datas=[('templates', 'templates')],
+    datas=[('templates', 'templates'), *openvr_data],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
