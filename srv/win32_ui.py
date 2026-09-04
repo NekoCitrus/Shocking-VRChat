@@ -11,6 +11,7 @@ import sys
 import threading
 import traceback
 from ctypes import wintypes
+from pathlib import Path
 
 import qrcode
 from loguru import logger
@@ -38,6 +39,7 @@ kernel32.GetModuleHandleW.restype = wintypes.HINSTANCE
 user32.CreateWindowExW.restype = wintypes.HWND
 user32.DefWindowProcW.restype = LRESULT
 user32.LoadIconW.restype = wintypes.HICON
+user32.LoadImageW.restype = wintypes.HANDLE
 user32.LoadCursorW.restype = wintypes.HANDLE
 user32.SendMessageW.restype = LRESULT
 user32.CreatePopupMenu.restype = wintypes.HMENU
@@ -47,6 +49,15 @@ user32.BeginPaint.restype = wintypes.HDC
 gdi32.DeleteObject.argtypes = [wintypes.HANDLE]
 gdi32.SetBkMode.argtypes = [wintypes.HDC, ctypes.c_int]
 gdi32.SetTextColor.argtypes = [wintypes.HDC, wintypes.DWORD]
+user32.LoadImageW.argtypes = [
+    wintypes.HINSTANCE,
+    wintypes.LPCWSTR,
+    wintypes.UINT,
+    ctypes.c_int,
+    ctypes.c_int,
+    wintypes.UINT,
+]
+user32.DestroyIcon.argtypes = [wintypes.HICON]
 
 WM_CREATE = 0x0001
 WM_DESTROY = 0x0002
@@ -103,7 +114,16 @@ COLOR_WHITE = 0x00FFFFFF
 COLOR_TEXT = 0x00202020
 IDC_ARROW = 32512
 IDI_APPLICATION = 32512
+IMAGE_ICON = 1
+LR_LOADFROMFILE = 0x0010
+SM_CXICON = 11
+SM_CYICON = 12
+SM_CXSMICON = 49
+SM_CYSMICON = 50
 CW_USEDEFAULT = -2147483648
+
+BUNDLE_DIR = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parents[1]))
+ICON_PATH = BUNDLE_DIR / 'assets' / 'shocking_vrchat.ico'
 
 ID_NAV_GENERAL = 101
 ID_NAV_PARAMS = 102
@@ -244,6 +264,9 @@ class DesktopApplication:
         self.exiting = False
         self.pending_exit = False
         self.tray_data = None
+        self.large_icon = None
+        self.small_icon = None
+        self.loaded_icons = []
         self.qr_matrix = []
         self._last_snapshot = None
 
@@ -709,7 +732,7 @@ class DesktopApplication:
         data.uID = 1
         data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP
         data.uCallbackMessage = WM_TRAY
-        data.hIcon = user32.LoadIconW(None, IDI_APPLICATION)
+        data.hIcon = self.small_icon or user32.LoadIconW(None, IDI_APPLICATION)
         data.szTip = 'ShockingVRChat'
         shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(data))
         self.tray_data = data
@@ -818,6 +841,9 @@ class DesktopApplication:
             if self.background_brush:
                 gdi32.DeleteObject(self.background_brush)
                 self.background_brush = None
+            for icon in self.loaded_icons:
+                user32.DestroyIcon(icon)
+            self.loaded_icons.clear()
             user32.PostQuitMessage(0)
             return 0
         return user32.DefWindowProcW(hwnd, message, wparam, lparam)
@@ -829,7 +855,26 @@ class DesktopApplication:
         comctl32.InitCommonControls()
         instance = kernel32.GetModuleHandleW(None)
         class_name = 'ShockingVRChatDesktopWindow'
-        icon = user32.LoadIconW(None, IDI_APPLICATION)
+        self.large_icon = user32.LoadImageW(
+            None,
+            str(ICON_PATH),
+            IMAGE_ICON,
+            user32.GetSystemMetrics(SM_CXICON),
+            user32.GetSystemMetrics(SM_CYICON),
+            LR_LOADFROMFILE,
+        )
+        self.small_icon = user32.LoadImageW(
+            None,
+            str(ICON_PATH),
+            IMAGE_ICON,
+            user32.GetSystemMetrics(SM_CXSMICON),
+            user32.GetSystemMetrics(SM_CYSMICON),
+            LR_LOADFROMFILE,
+        )
+        self.loaded_icons = [icon for icon in (self.large_icon, self.small_icon) if icon]
+        fallback_icon = user32.LoadIconW(None, IDI_APPLICATION)
+        large_icon = self.large_icon or fallback_icon
+        small_icon = self.small_icon or fallback_icon
         window_class = WNDCLASSEXW(
             ctypes.sizeof(WNDCLASSEXW),
             0,
@@ -837,12 +882,12 @@ class DesktopApplication:
             0,
             0,
             instance,
-            icon,
+            large_icon,
             user32.LoadCursorW(None, IDC_ARROW),
             self.background_brush,
             None,
             class_name,
-            icon,
+            small_icon,
         )
         if not user32.RegisterClassExW(ctypes.byref(window_class)):
             error = ctypes.get_last_error()

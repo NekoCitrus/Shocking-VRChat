@@ -10,12 +10,16 @@ a = Analysis(
     ['shocking_vrchat.py'],
     pathex=[],
     binaries=[],
-    datas=[('templates', 'templates'), *openvr_data],
+    datas=[
+        ('templates', 'templates'),
+        ('assets/shocking_vrchat.ico', 'assets'),
+        *openvr_data,
+    ],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['PIL'],
     noarchive=False,
     optimize=0,
 )
@@ -40,4 +44,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=['assets/shocking_vrchat.ico'],
 )
