@@ -1,4 +1,9 @@
 # Shocking VRChat
+<img width="1102" height="750" alt="image" src="https://github.com/user-attachments/assets/636a17c1-cfc8-4a83-910e-6d861db08d8b" />
+<img width="1102" height="750" alt="image" src="https://github.com/user-attachments/assets/1aa97c51-aa7f-43b4-a7c1-a790108d9daf" />
+<img width="1102" height="750" alt="image" src="https://github.com/user-attachments/assets/c10c9228-88d1-4488-bee5-c0e53f47433b" />
+<img width="1102" height="750" alt="image" src="https://github.com/user-attachments/assets/6396a63d-05ba-4a79-b396-1bafb5c2740b" />
+
 
 [English version](README_en.md)
 
