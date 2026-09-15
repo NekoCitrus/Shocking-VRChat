@@ -82,7 +82,7 @@ class AdvancedChatboxManager:
     def format_device_status(self, connections, shock_handlers=None):
         """格式化精简设备状态。"""
         if not connections:
-            return '未连接设备'
+            return '设备未连接'
 
         self._refresh_handler_status(shock_handlers)
         status_lines = [
@@ -91,12 +91,12 @@ class AdvancedChatboxManager:
         ]
         if len(status_lines) > 1:
             return '郊狼状态 - 多设备:\n' + '\n'.join(status_lines)
-        return '状态: ' + status_lines[0]
+        return status_lines[0]
 
     def format_detailed_status(self, connections, shock_handlers=None):
         """格式化详细状态信息。"""
         if not connections:
-            return '郊狼: 未连接设备'
+            return '设备未连接'
 
         self._refresh_handler_status(shock_handlers)
         detailed_lines = []
